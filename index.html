@@ -131,7 +131,7 @@
                 </label>
                 <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
             </div>
-            <div class="chip-info">Default: <code>NEXTION/wazlley26.tft</code> from the repo.</div>
+            <div class="chip-info">Default: <code>NEXTION/canbusV20.tft</code> from the repo.</div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
         </div>
@@ -365,8 +365,8 @@ let nextionWriter = null;
 let nextionTftFile = null;
 let nextionRxBuffer = new Uint8Array(0);
 let nextionPumpRunning = false;
-const NEXTION_DEFAULT_TFT  = 'NEXTION/wazlley26.tft';
-const NEXTION_DEFAULT_NAME = 'wazlley26.tft';
+const NEXTION_DEFAULT_TFT  = 'NEXTION/canbusV20.tft';
+const NEXTION_DEFAULT_NAME = 'canbusV20.tft';
 
 document.getElementById('nextionFile').addEventListener('change', (e) => {
     const file = e.target.files[0];
