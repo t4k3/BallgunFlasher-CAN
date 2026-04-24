@@ -124,6 +124,21 @@
                 <span id="nextionStatusText">Disconnected</span>
             </div>
             <button class="btn-connect" id="nextionConnectBtn">Connect NEXTION</button>
+
+            <!-- Display model picker -->
+            <div style="margin:8px 0 10px; display:flex; gap:8px;">
+                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #ff9800; border-radius:8px; text-align:center; font-size:13px;">
+                    <input type="radio" name="nextionModel" value="square" checked style="margin-right:6px;">
+                    <strong>Square</strong><br>
+                    <span style="font-size:10px; color:#888;">NX4827P043 · 4.3"</span>
+                </label>
+                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #444; border-radius:8px; text-align:center; font-size:13px;">
+                    <input type="radio" name="nextionModel" value="circle" style="margin-right:6px;">
+                    <strong>Circle</strong><br>
+                    <span style="font-size:10px; color:#888;">NX4848E028 · 2.8" round</span>
+                </label>
+            </div>
+
             <button class="btn-update nextion" id="nextionUpdateBtn" disabled>Flash Nextion TFT</button>
             <div style="margin-top:6px;">
                 <label id="nextionFileLabel" for="nextionFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
@@ -131,7 +146,7 @@
                 </label>
                 <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
             </div>
-            <div class="chip-info">Default: <code>NEXTION/canbusV20.tft</code> from the repo.</div>
+            <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
         </div>
@@ -365,8 +380,36 @@ let nextionWriter = null;
 let nextionTftFile = null;
 let nextionRxBuffer = new Uint8Array(0);
 let nextionPumpRunning = false;
-const NEXTION_DEFAULT_TFT  = 'NEXTION/canbusV20.tft';
-const NEXTION_DEFAULT_NAME = 'canbusV20.tft';
+// Display model -> TFT file mapping. Operator picks via the radio
+// buttons above the Flash button (default: square).
+const NEXTION_TFTS = {
+    square: { path: 'NEXTION/canbusV20.tft',    name: 'canbusV20.tft',    model: 'NX4827P043 · 4.3" square' },
+    circle: { path: 'NEXTION/canBusRounded.tft', name: 'canBusRounded.tft', model: 'NX4848E028 · 2.8" round' },
+};
+function nextionSelectedModel() {
+    const sel = document.querySelector('input[name="nextionModel"]:checked');
+    return sel ? sel.value : 'square';
+}
+function nextionSelectedTft() {
+    return NEXTION_TFTS[nextionSelectedModel()] || NEXTION_TFTS.square;
+}
+
+// React to model radio changes: update the default label + highlight selected
+function nextionRefreshModelUI() {
+    const tft = nextionSelectedTft();
+    const lbl = document.getElementById('nextionDefaultLabel');
+    if (lbl && !nextionTftFile) {
+        lbl.innerHTML = `Default: <code>${tft.path}</code> (${tft.model})`;
+    }
+    document.querySelectorAll('input[name="nextionModel"]').forEach(r => {
+        r.parentElement.style.borderColor = r.checked ? '#ff9800' : '#444';
+    });
+}
+document.querySelectorAll('input[name="nextionModel"]').forEach(r => {
+    r.addEventListener('change', nextionRefreshModelUI);
+});
+// Initial paint (on load)
+setTimeout(nextionRefreshModelUI, 0);
 
 document.getElementById('nextionFile').addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -379,13 +422,14 @@ document.getElementById('nextionFile').addEventListener('change', (e) => {
 });
 
 async function nextionDownloadDefaultTft() {
-    const url = `${FIRMWARE_BASE}/${NEXTION_DEFAULT_TFT}?cb=${Date.now()}`;
-    log(`downloading ${NEXTION_DEFAULT_NAME}…`, 'NEXTION');
+    const tft = nextionSelectedTft();
+    const url = `${FIRMWARE_BASE}/${tft.path}?cb=${Date.now()}`;
+    log(`downloading ${tft.name} (${tft.model})…`, 'NEXTION');
     const r = await fetch(url);
-    if (!r.ok) throw new Error(`Failed to download ${NEXTION_DEFAULT_NAME}: HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`Failed to download ${tft.name}: HTTP ${r.status}`);
     const ab = await r.arrayBuffer();
     log(`downloaded ${(ab.byteLength / 1024).toFixed(0)} KB`, 'NEXTION');
-    return { data: new Uint8Array(ab), size: ab.byteLength, name: NEXTION_DEFAULT_NAME };
+    return { data: new Uint8Array(ab), size: ab.byteLength, name: tft.name };
 }
 
 function nextionSetStatus(text, connected) {
