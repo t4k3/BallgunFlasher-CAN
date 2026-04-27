@@ -717,7 +717,41 @@ async function nextionUpdate(tftData) {
         log(`upload complete: ${chunksSent} chunks in ${((Date.now()-uploadStart)/1000).toFixed(1)}s`, 'NEXTION');
         nextionSetProgress(97);
         nextionSetStatus('Finalizing…', true);
-        await new Promise(r => setTimeout(r, 2000));
+
+        // ---- Post-upload sniff window -------------------------------------
+        // After the last chunk Nextion either reboots silently into the new
+        // TFT, or it broadcasts an error code over UART (model mismatch,
+        // firmware update required, EEPROM op failed, etc.). The bridge is
+        // still active here so we can read those bytes through STANDALONE.
+        // Dump anything we get for 3 s so the operator can see what the
+        // device is complaining about.
+        nextionRxBuffer = new Uint8Array(0);
+        const sniffStart = Date.now();
+        log('post-upload sniff (3 s) — listening for Nextion response…', 'NEXTION');
+        while (Date.now() - sniffStart < 3000) {
+            await new Promise(r => setTimeout(r, 200));
+        }
+        if (nextionRxBuffer.length > 0) {
+            const buf = nextionRxBuffer;
+            const hex = Array.from(buf).map(b => b.toString(16).padStart(2,'0')).join(' ');
+            const ascii = Array.from(buf).map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '.').join('');
+            log(`post-upload bytes (${buf.length}): ${hex}`, 'NEXTION');
+            log(`  ascii view: "${ascii}"`, 'NEXTION');
+            // Quick heuristic decode of common Nextion event codes
+            if (buf[0] === 0x88) log('  -> 0x88 = Nextion ready (boot OK)', 'NEXTION');
+            else if (buf[0] === 0x00 && buf[1] === 0x00) log('  -> 0x00 0x00 ... = startup sequence', 'NEXTION');
+            else if (buf[0] === 0x1A) log('  -> 0x1A = invalid variable', 'NEXTION');
+            else if (buf[0] === 0x1B) log('  -> 0x1B = invalid operation', 'NEXTION');
+            else if (buf[0] === 0x1C) log('  -> 0x1C = assignment failed', 'NEXTION');
+            else if (buf[0] === 0x1D) log('  -> 0x1D = EEPROM operation failed', 'NEXTION');
+            else if (buf[0] === 0x1E) log('  -> 0x1E = invalid params', 'NEXTION');
+            else if (buf[0] === 0x1F) log('  -> 0x1F = IO failed', 'NEXTION');
+            else if (buf[0] === 0x09) log('  -> 0x09 = invalid CRC (TFT corrupted)', 'NEXTION');
+        } else {
+            log('post-upload: silence (display likely rebooting cleanly)', 'NEXTION');
+        }
+        nextionRxBuffer = new Uint8Array(0);
+        // -------------------------------------------------------------------
 
         // Step 5: exit passthrough
         await nextionSendRaw('NEXTION_EXIT\n');
