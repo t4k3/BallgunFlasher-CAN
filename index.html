@@ -946,14 +946,46 @@ async function ftd30WriteRegister(slaveId, reg, value, timeoutMs = 400) {
     const hex = (b) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join(' ');
     log(`TX: ${hex(frame)}  (id=${slaveId} FC06 reg=0x${reg.toString(16).padStart(4,'0')} val=${value})`, 'FTD30');
 
+    // Read up to 8 bytes (echo for FC06) but accept 5 bytes (exception response)
     const resp = await ftd30ReadExact(8, timeoutMs);
     log(`RX: ${hex(resp) || '(timeout, 0 bytes)'}`, 'FTD30');
 
-    if (resp.length !== 8) return { ok: false, response: resp, frame };
-    // Echo verify: response should match the request byte-for-byte
-    for (let i = 0; i < 8; i++) {
-        if (resp[i] !== frame[i]) return { ok: false, response: resp, frame };
+    if (resp.length === 0) {
+        log('   ✗ no response (timeout)', 'FTD30');
+        return { ok: false, response: resp, frame };
     }
+
+    // Modbus exception response: [id][func|0x80][code][crcLo][crcHi]
+    if (resp.length >= 5 && resp[0] === slaveId && (resp[1] & 0x80)) {
+        const code = resp[2];
+        const meaning = {
+            0x01: 'Illegal function',
+            0x02: 'Illegal data address',
+            0x03: 'Illegal data value',
+            0x04: 'Slave device failure',
+            0x05: 'Acknowledge',
+            0x06: 'Slave device busy',
+            0x08: 'Memory parity error',
+            0x0A: 'Gateway path unavailable',
+            0x0B: 'Gateway target failed (vendor: usually parameter locked / wrong password / not in setup mode)',
+        }[code] || 'unknown';
+        log(`   ✗ Modbus EXCEPTION 0x${code.toString(16).padStart(2,'0')} — ${meaning}`, 'FTD30');
+        return { ok: false, response: resp, frame, exceptionCode: code };
+    }
+
+    if (resp.length !== 8) {
+        log(`   ✗ short response (got ${resp.length}/8 bytes)`, 'FTD30');
+        return { ok: false, response: resp, frame };
+    }
+
+    // Echo verify
+    for (let i = 0; i < 8; i++) {
+        if (resp[i] !== frame[i]) {
+            log(`   ✗ echo mismatch at byte ${i}: sent 0x${frame[i].toString(16)} got 0x${resp[i].toString(16)}`, 'FTD30');
+            return { ok: false, response: resp, frame };
+        }
+    }
+    log('   ✓ ack', 'FTD30');
     return { ok: true, response: resp, frame };
 }
 
