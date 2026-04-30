@@ -34,6 +34,7 @@
     .device-panel.standalone h2 { color: #ffb74d; }
     .device-panel.nextion   h2 { color: #ff9800; }
     .device-panel.pinscan   h2 { color: #81d4fa; }
+    .device-panel.ftd30     h2 { color: #66bb6a; }
     .device-panel svg { width: 22px; height: 22px; }
 
     .status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 12px; background: #1a1a2e; border-radius: 6px; font-size: 13px; }
@@ -52,6 +53,8 @@
     .btn-update.standalone { background: linear-gradient(135deg, #ffb74d, #ff9800); }
     .btn-update.nextion    { background: linear-gradient(135deg, #ff9800, #f57c00); color: white; }
     .btn-update.pinscan    { background: linear-gradient(135deg, #81d4fa, #29b6f6); }
+    .btn-update.ftd30-master { background: linear-gradient(135deg, #66bb6a, #2e7d32); color: white; }
+    .btn-update.ftd30-slave  { background: linear-gradient(135deg, #4dd0e1, #00838f); color: white; }
     .btn-update:hover:not(:disabled) { opacity: 0.92; transform: scale(1.01); }
 
     .progress { width: 100%; height: 6px; background: #1a1a2e; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; }
@@ -166,6 +169,34 @@
             <div class="chip-info">Flashes ballgun_pinscan. Open <code>idf.py monitor</code> at 115200 after flash to read GPIO scan results.</div>
             <div class="progress" id="pinscanProgress"><div class="progress-bar pinscan" id="pinscanProgressBar"></div></div>
             <div class="mac-readout" id="pinscanMac"></div>
+        </div>
+
+        <!-- FTD30 PRODUCTION SETUP (direct USB-FTDI Modbus) -->
+        <div class="device-panel ftd30">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12h4 M17 12h4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v6 M9 12h6" stroke="currentColor" stroke-width="2"/></svg>
+                FTD30 SETUP <span style="font-size:0.65em; opacity:0.7;">factory production · USB-FTDI Modbus</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="ftd30StatusDot"></div>
+                <span id="ftd30StatusText">Disconnected</span>
+            </div>
+            <button class="btn-connect" id="ftd30ConnectBtn">Connect FTDI</button>
+
+            <div style="margin:8px 0; display:flex; gap:8px; align-items:center; font-size:13px;">
+                <label style="flex:1;">Current node ID
+                    <input type="number" id="ftd30CurrentId" value="1" min="1" max="247"
+                           style="width:60px; padding:4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:4px; margin-left:6px;">
+                </label>
+            </div>
+
+            <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash FTD30 as MASTER (id=1)</button>
+            <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash FTD30 as SLAVE (id=2)</button>
+
+            <div class="chip-info" style="margin-top:8px;">
+                Connect <strong>one FTD30 at a time</strong> via FTDI USB-RS485 cable (38400 8E1).<br>
+                Sequence sent: unlock <code>0x103F=11</code> → set <code>0x000A=8</code> (CAN bus mode) → set <code>0x0015=0</code> (APP=0) → set <code>0x0001</code> = node ID → save <code>0x1000=0x0100</code>.
+            </div>
         </div>
     </div>
 
@@ -773,6 +804,202 @@ async function nextionUpdate(tftData) {
         updateBtn.disabled = false;
     }
 }
+
+// ============================================================================
+// FTD30 PRODUCTION SETUP — direct Modbus RTU over USB-FTDI (38400 8E1)
+//
+// Replicates what the DRIVER firmware does on first boot, but executed from
+// the production bench BEFORE the FTD30 is mounted to its target board, so
+// each unit ships preconfigured with the right node ID and CAN-bus mode.
+//
+// Sequence per FTD30 (one at a time):
+//   address current node ID (default 1 = factory):
+//     FC06  0x103F = 11        ; unlock parameter writes (session-scoped)
+//     FC06  0x000A = 8         ; communication mode = CAN bus
+//     FC06  0x0015 = 0         ; APP = 0 (external Modbus/CAN control)
+//     FC06  0x0001 = newNodeId ; reassign node ID (1 = master, 2 = slave)
+//     FC06  0x1000 = 0x0100    ; commit to EEPROM
+//
+// We address all writes to the OLD ID (factory), since the FTD30 only
+// switches its responding ID after EEPROM save. The save itself goes to the
+// OLD ID too. After that, the device responds at the NEW ID.
+// ============================================================================
+const FTD30_FACTORY_ID = 1;     // factory default address operators expect
+const FTD30_BAUD       = 38400;
+let ftd30Port   = null;
+let ftd30Reader = null;
+let ftd30Writer = null;
+
+// Modbus RTU CRC-16 (poly 0xA001 — matches DRIVER firmware's CRCTable[256])
+const FTD30_CRC = (() => {
+    const t = new Uint16Array(256);
+    for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) {
+            c = (c & 1) ? (c >>> 1) ^ 0xA001 : (c >>> 1);
+        }
+        t[i] = c & 0xFFFF;
+    }
+    return (data, len) => {
+        let crc = 0xFFFF;
+        for (let i = 0; i < len; i++) crc = t[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+        return crc & 0xFFFF;
+    };
+})();
+
+function ftd30SetStatus(text, connected) {
+    document.getElementById('ftd30StatusText').textContent = text;
+    const dot = document.getElementById('ftd30StatusDot');
+    if (connected) dot.classList.add('connected'); else dot.classList.remove('connected');
+}
+
+async function ftd30Connect() {
+    try {
+        ftd30Port = await navigator.serial.requestPort();
+        await ftd30Port.open({
+            baudRate: FTD30_BAUD,
+            dataBits: 8,
+            stopBits: 1,
+            parity:   'even',
+            flowControl: 'none',
+        });
+        ftd30Reader = ftd30Port.readable.getReader();
+        ftd30Writer = ftd30Port.writable.getWriter();
+        ftd30SetStatus('Connected · 38400 8E1', true);
+        document.getElementById('ftd30ConnectBtn').textContent = 'Disconnect FTDI';
+        document.getElementById('ftd30ConnectBtn').classList.add('connected');
+        document.getElementById('ftd30MasterBtn').disabled = false;
+        document.getElementById('ftd30SlaveBtn').disabled = false;
+        log('FTDI port opened @ 38400 8E1', 'FTD30');
+        return true;
+    } catch (e) {
+        log(`FTDI connect failed: ${e.message || e}`, 'FTD30');
+        ftd30Port = null; ftd30Reader = null; ftd30Writer = null;
+        return false;
+    }
+}
+
+async function ftd30Disconnect() {
+    try { if (ftd30Reader) { await ftd30Reader.cancel(); ftd30Reader.releaseLock(); ftd30Reader = null; } } catch {}
+    try { if (ftd30Writer) { ftd30Writer.releaseLock(); ftd30Writer = null; } } catch {}
+    try { if (ftd30Port) await ftd30Port.close(); } catch {}
+    ftd30Port = null;
+    ftd30SetStatus('Disconnected', false);
+    document.getElementById('ftd30ConnectBtn').textContent = 'Connect FTDI';
+    document.getElementById('ftd30ConnectBtn').classList.remove('connected');
+    document.getElementById('ftd30MasterBtn').disabled = true;
+    document.getElementById('ftd30SlaveBtn').disabled = true;
+}
+
+document.getElementById('ftd30ConnectBtn').addEventListener('click', async () => {
+    if (ftd30Port) await ftd30Disconnect();
+    else            await ftd30Connect();
+});
+
+// Read up to `n` bytes from the FTDI port within `timeoutMs`. Returns Uint8Array.
+async function ftd30ReadExact(n, timeoutMs) {
+    const out = new Uint8Array(n);
+    let got = 0;
+    const deadline = Date.now() + timeoutMs;
+    while (got < n && Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        const t = setTimeout(() => { try { ftd30Reader.cancel(); } catch {} }, Math.max(remaining, 1));
+        let chunk;
+        try {
+            const res = await ftd30Reader.read();
+            chunk = res.value;
+            if (res.done) { clearTimeout(t); break; }
+        } catch (e) {
+            clearTimeout(t);
+            // Reader was cancelled by timeout — re-acquire and break
+            try { ftd30Reader.releaseLock(); } catch {}
+            ftd30Reader = ftd30Port.readable.getReader();
+            break;
+        }
+        clearTimeout(t);
+        if (chunk && chunk.length > 0) {
+            const take = Math.min(chunk.length, n - got);
+            out.set(chunk.subarray(0, take), got);
+            got += take;
+        }
+    }
+    return out.subarray(0, got);
+}
+
+// FC 0x06 — Write Single Register. Sends frame, expects byte-for-byte echo.
+// Returns { ok: bool, response: Uint8Array, frame: Uint8Array }
+async function ftd30WriteRegister(slaveId, reg, value, timeoutMs = 400) {
+    const frame = new Uint8Array(8);
+    frame[0] = slaveId & 0xFF;
+    frame[1] = 0x06;
+    frame[2] = (reg >> 8) & 0xFF;
+    frame[3] =  reg       & 0xFF;
+    frame[4] = (value >> 8) & 0xFF;
+    frame[5] =  value       & 0xFF;
+    const crc = FTD30_CRC(frame, 6);
+    frame[6] =  crc       & 0xFF;
+    frame[7] = (crc >> 8) & 0xFF;
+
+    await ftd30Writer.write(frame);
+    const hex = (b) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join(' ');
+    log(`TX: ${hex(frame)}  (id=${slaveId} FC06 reg=0x${reg.toString(16).padStart(4,'0')} val=${value})`, 'FTD30');
+
+    const resp = await ftd30ReadExact(8, timeoutMs);
+    log(`RX: ${hex(resp) || '(timeout, 0 bytes)'}`, 'FTD30');
+
+    if (resp.length !== 8) return { ok: false, response: resp, frame };
+    // Echo verify: response should match the request byte-for-byte
+    for (let i = 0; i < 8; i++) {
+        if (resp[i] !== frame[i]) return { ok: false, response: resp, frame };
+    }
+    return { ok: true, response: resp, frame };
+}
+
+async function ftd30RunSequence(targetNodeId, label) {
+    if (!ftd30Writer) {
+        log('FTDI not connected', label);
+        return;
+    }
+    const currentId = parseInt(document.getElementById('ftd30CurrentId').value, 10) || FTD30_FACTORY_ID;
+
+    log(`\n=== FTD30 ${label} setup (current id=${currentId} -> ${targetNodeId}) ===`, 'FTD30');
+    document.getElementById('ftd30MasterBtn').disabled = true;
+    document.getElementById('ftd30SlaveBtn').disabled = true;
+
+    const writes = [
+        { reg: 0x103F, val: 11,             desc: 'unlock parameter writes (password 11)' },
+        { reg: 0x000A, val: 8,              desc: 'comm mode = CAN bus' },
+        { reg: 0x0015, val: 0,              desc: 'APP = 0 (external control)' },
+        { reg: 0x0001, val: targetNodeId,   desc: `node ID = ${targetNodeId}` },
+        { reg: 0x1000, val: 0x0100,         desc: 'save to EEPROM' },
+    ];
+
+    let allOk = true;
+    for (const w of writes) {
+        log(`-> ${w.desc}`, 'FTD30');
+        const r = await ftd30WriteRegister(currentId, w.reg, w.val);
+        if (!r.ok) {
+            log(`   FAILED on reg 0x${w.reg.toString(16).padStart(4,'0')}`, 'FTD30');
+            allOk = false;
+            break;
+        }
+        // small inter-frame gap
+        await new Promise(r2 => setTimeout(r2, 80));
+    }
+
+    if (allOk) {
+        log(`\n${label} configured OK. Power-cycle the FTD30 to apply.`, 'FTD30');
+        log(`After reboot it will respond at id=${targetNodeId}.`, 'FTD30');
+    } else {
+        log(`\n${label} setup FAILED. Verify wiring / FTDI port / current node id.`, 'FTD30');
+    }
+
+    document.getElementById('ftd30MasterBtn').disabled = false;
+    document.getElementById('ftd30SlaveBtn').disabled = false;
+}
+
+document.getElementById('ftd30MasterBtn').addEventListener('click', () => ftd30RunSequence(1, 'MASTER'));
+document.getElementById('ftd30SlaveBtn') .addEventListener('click', () => ftd30RunSequence(2, 'SLAVE'));
 </script>
 
 </body>
