@@ -675,7 +675,15 @@ async function nextionUpdate(tftData) {
             await nextionSendCmd('connect');
             try {
                 const resp = await nextionReadUntilByte(0xFF, 2000);
-                log(`  Nextion at ${baud}: ${new TextDecoder().decode(resp).replace(/[\xff]/g,'')}`, 'NEXTION');
+                const cleanText = new TextDecoder().decode(resp).replace(/[\xff]/g,'').replace(/\x00/g,'');
+                log(`  Nextion at ${baud}: ${cleanText}`, 'NEXTION');
+                // Parse: comok <touch>,<model>,<fwVersion>,<mcucode>,<serial>,<flashSize>
+                const parts = cleanText.split(',');
+                if (parts.length >= 4) {
+                    const model = parts[1] || 'unknown';
+                    const fwVersion = parseInt(parts[2], 10);
+                    log(`  Model: ${model}, fwVersion: ${isNaN(fwVersion) ? 'unknown' : fwVersion}`, 'NEXTION');
+                }
                 detectedBaud = baud; break;
             } catch {}
         }
