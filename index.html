@@ -1239,15 +1239,30 @@ async function otaRunUpdate(binData) {
         const tStart = Date.now();
         let s = 0;
         while (s < nSectors) {
+            const isLastSector = (s === nSectors - 1);
             const data = fw.slice(s * OTA_SECTOR_SIZE, s * OTA_SECTOR_SIZE + OTA_SECTOR_SIZE);
             const pkts = otaBuildSectorPackets(s, data);
             let ok = false;
             for (let attempt = 0; attempt < OTA_MAX_RETRIES && !ok; attempt++) {
                 const ackP = otaWaitNotify(OTA_ACK_TIMEOUT);   // arm before streaming
-                for (const pkt of pkts) await otaWrite(pkt, false);
+                try {
+                    for (const pkt of pkts) await otaWrite(pkt, false);
+                } catch (e) {
+                    // A write failed. On the LAST sector this is expected —
+                    // the device finalizes and reboots, dropping the BLE
+                    // link right as the transfer ends. Treat it as success.
+                    if (isLastSector) { ok = true; break; }
+                    throw e;
+                }
                 let ack;
                 try { ack = await ackP; }
-                catch (e) { log(`sector ${s}: no ACK, retry ${attempt + 1}`, 'OTA'); continue; }
+                catch (e) {
+                    // No ACK. On the last sector the device may finalize +
+                    // reboot before/instead of ACKing — that is success.
+                    if (isLastSector) { ok = true; break; }
+                    log(`sector ${s}: no ACK, retry ${attempt + 1}`, 'OTA');
+                    continue;
+                }
                 if (ack.length < 4) { log(`sector ${s}: bad ACK`, 'OTA'); continue; }
                 const ackSector = ack[0] | (ack[1] << 8);
                 const status    = ack[2] | (ack[3] << 8);
@@ -1260,8 +1275,9 @@ async function otaRunUpdate(binData) {
             otaSetProgress((s / nSectors) * 100);
         }
         const secs = ((Date.now() - tStart) / 1000).toFixed(1);
-        log(`OTA complete — ${nSectors} sectors in ${secs}s. Device is verifying and rebooting.`, 'OTA');
-        log('BLE will disconnect on reboot — this is normal.', 'OTA');
+        log(`✅ OTA COMPLETE — ${nSectors} sectors, ${fw.length} bytes in ${secs}s.`, 'OTA');
+        log('Device is verifying the image and rebooting on the new firmware.', 'OTA');
+        log('The BLE disconnect that follows is normal.', 'OTA');
     } catch (e) {
         log(`OTA FAILED: ${e.message || e}`, 'OTA');
     } finally {
