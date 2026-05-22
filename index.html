@@ -62,6 +62,9 @@
     .progress-bar.standalone { background: linear-gradient(90deg, #ffb74d, #ffd180); }
     .progress-bar.nextion    { background: linear-gradient(90deg, #ff9800, #ffcc80); }
     .progress-bar.pinscan    { background: linear-gradient(90deg, #81d4fa, #b3e5fc); }
+    .progress-bar.ota        { background: linear-gradient(90deg, #ab47bc, #ce93d8); }
+    .device-panel.ota h2 { color: #ce93d8; }
+    .btn-update.ota { background: linear-gradient(135deg, #ab47bc, #7b1fa2); color: white; }
 
     .chip-info { font-size: 11px; color: #666; margin-top: 8px; }
     .mac-readout { font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; color: #eee; margin-top: 6px; word-break: break-all; }
@@ -114,6 +117,31 @@
             <div class="progress" id="standaloneProgress"><div class="progress-bar standalone" id="standaloneProgressBar"></div></div>
             <div class="chip-info" id="standaloneChipInfo"></div>
             <div class="mac-readout" id="standaloneMac"></div>
+        </div>
+
+        <!-- OTA via Bluetooth (wireless) -->
+        <div class="device-panel ota">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+                OTA BLUETOOTH <span id="otaVersion" style="font-size:0.65em; opacity:0.7;">(loading…)</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="otaStatusDot"></div>
+                <span id="otaStatusText">Disconnected</span>
+            </div>
+            <button class="btn-connect" id="otaConnectBtn">Connect via Bluetooth</button>
+            <button class="btn-update ota" id="otaUpdateBtn" disabled>Update firmware (OTA)</button>
+            <div style="margin-top:6px;">
+                <label id="otaFileLabel" for="otaFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
+                    …or pick a custom .bin
+                </label>
+                <input type="file" id="otaFile" accept=".bin" style="display:none;" />
+            </div>
+            <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
+            <div class="chip-info" id="otaInfo">
+                Wireless firmware update over BLE — no cable. Chrome/Edge desktop or Chrome Android only
+                (Web Bluetooth is not available on iOS).
+            </div>
         </div>
 
         <!-- NEXTION -->
@@ -256,10 +284,12 @@ if (!('serial' in navigator)) {
         const buf = new Uint8Array(await r.arrayBuffer());
         const text = new TextDecoder('ascii', { fatal: false }).decode(buf);
         const m = text.match(/V\d+\.\d+\.\d+/);
-        if (m) document.getElementById('standaloneVersion').textContent = m[0];
-        else document.getElementById('standaloneVersion').textContent = '(unknown)';
+        const ver = m ? m[0] : '(unknown)';
+        document.getElementById('standaloneVersion').textContent = ver;
+        document.getElementById('otaVersion').textContent = ver;
     } catch (e) {
         document.getElementById('standaloneVersion').textContent = '(offline)';
+        document.getElementById('otaVersion').textContent = '(offline)';
     }
 })();
 
@@ -1042,6 +1072,224 @@ async function ftd30RunSequence(targetNodeId, label) {
 
 document.getElementById('ftd30MasterBtn').addEventListener('click', () => ftd30RunSequence(1, 'MASTER'));
 document.getElementById('ftd30SlaveBtn') .addEventListener('click', () => ftd30RunSequence(2, 'SLAVE'));
+
+//=============================================================================
+// OTA via Bluetooth (Web Bluetooth) — wireless ESP32 firmware update.
+// Implements the protocol in ballgun_STANDALONE_CANBUS/OTA_PROTOCOL.md
+//=============================================================================
+const OTA_SERVICE_UUID = 'b69abf60-e699-beb7-624a-e625c0b1f625';
+const OTA_CHAR_UUID    = 'a7e5c5dc-918f-45b7-d64e-f90ee72691f9';
+const OTA_SECTOR_SIZE  = 4096;
+const OTA_PKT_PAYLOAD  = 180;     // data bytes per packet (conservative for any MTU)
+const OTA_ACK_TIMEOUT  = 3000;    // ms to wait for a sector ACK
+const OTA_MAX_RETRIES  = 5;
+
+const ota = { device: null, server: null, char: null, waiter: null };
+
+function otaSetStatus(connected, text) {
+    document.getElementById('otaStatusDot').classList.toggle('connected', connected);
+    document.getElementById('otaStatusText').textContent = text;
+    document.getElementById('otaConnectBtn').classList.toggle('connected', connected);
+}
+function otaSetProgress(pct) {
+    const bar = document.getElementById('otaProgress');
+    bar.style.display = 'block';
+    document.getElementById('otaProgressBar').style.width = pct.toFixed(1) + '%';
+}
+
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) — matches the firmware.
+function otaCrc16(bytes) {
+    let crc = 0xFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+        crc ^= bytes[i] << 8;
+        for (let b = 0; b < 8; b++) {
+            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+        }
+    }
+    return crc & 0xFFFF;
+}
+
+function otaOnNotify(ev) {
+    const v = new Uint8Array(ev.target.value.buffer);
+    // PROGRESS notification (FE 10 …, 12 bytes) — informational, do not resolve.
+    if (v.length === 12 && v[0] === 0xFE && v[1] === 0x10) return;
+    if (ota.waiter) { const w = ota.waiter; ota.waiter = null; w(v); }
+}
+
+function otaWaitNotify(timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => { if (ota.waiter) { ota.waiter = null; reject(new Error('timeout')); } }, timeoutMs);
+        ota.waiter = (v) => { clearTimeout(t); resolve(v); };
+    });
+}
+
+async function otaWrite(bytes, withResponse) {
+    const buf = Uint8Array.from(bytes);
+    if (withResponse) {
+        await ota.char.writeValueWithResponse(buf);
+    } else if (ota.char.writeValueWithoutResponse) {
+        await ota.char.writeValueWithoutResponse(buf);
+    } else {
+        await ota.char.writeValue(buf);   // older Chrome fallback
+    }
+}
+
+async function otaConnect() {
+    if (!navigator.bluetooth) {
+        log('Web Bluetooth NOT available — use Chrome/Edge desktop or Chrome Android (not iOS)', 'OTA');
+        return;
+    }
+    try {
+        log('requesting Bluetooth device (filter: name "wazlley")…', 'OTA');
+        ota.device = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: 'wazlley' }],
+            optionalServices: [OTA_SERVICE_UUID],
+        });
+        ota.device.addEventListener('gattserverdisconnected', () => {
+            otaSetStatus(false, 'Disconnected');
+            document.getElementById('otaUpdateBtn').disabled = true;
+            log('BLE disconnected', 'OTA');
+        });
+        log(`connecting to ${ota.device.name}…`, 'OTA');
+        ota.server  = await ota.device.gatt.connect();
+        const svc   = await ota.server.getPrimaryService(OTA_SERVICE_UUID);
+        ota.char    = await svc.getCharacteristic(OTA_CHAR_UUID);
+        await ota.char.startNotifications();
+        ota.char.addEventListener('characteristicvaluechanged', otaOnNotify);
+        otaSetStatus(true, `Connected: ${ota.device.name}`);
+        document.getElementById('otaUpdateBtn').disabled = false;
+        log(`connected to ${ota.device.name} — ready for OTA`, 'OTA');
+    } catch (e) {
+        log(`connect failed: ${e.message || e}`, 'OTA');
+        otaSetStatus(false, 'Disconnected');
+    }
+}
+
+// Build the packet list for one sector, guaranteeing no packet is exactly
+// 20 bytes (a 20-byte packet would be misread by the firmware as a command).
+function otaBuildSectorPackets(sectorIndex, data) {
+    const crc = otaCrc16(data);
+    const sLo = sectorIndex & 0xFF, sHi = (sectorIndex >> 8) & 0xFF;
+    const pkts = [];
+    let off = 0, seq = 0;
+    while (off < data.length) {
+        const isLast = (off + OTA_PKT_PAYLOAD >= data.length);
+        if (isLast) {
+            const chunk = data.slice(off);
+            pkts.push([sLo, sHi, 0xFF, ...chunk, (crc >> 8) & 0xFF, crc & 0xFF]);
+            off = data.length;
+        } else {
+            pkts.push([sLo, sHi, seq, ...data.slice(off, off + OTA_PKT_PAYLOAD)]);
+            off += OTA_PKT_PAYLOAD;
+        }
+        seq++;
+    }
+    // Anti-20-byte guard: if the last packet is exactly 20 bytes, move 8 data
+    // bytes from the previous packet into it (keeps byte order intact).
+    if (pkts.length >= 2 && pkts[pkts.length - 1].length === 20) {
+        const prev = pkts[pkts.length - 2];
+        const last = pkts[pkts.length - 1];
+        const moved = prev.splice(prev.length - 8, 8);   // 8 data bytes off prev tail
+        last.splice(3, 0, ...moved);                     // insert after last's 3-byte header
+    }
+    return pkts;
+}
+
+async function otaRunUpdate(binData) {
+    const btn = document.getElementById('otaUpdateBtn');
+    const cbtn = document.getElementById('otaConnectBtn');
+    btn.disabled = true; cbtn.disabled = true;
+    try {
+        const fw = new Uint8Array(binData);
+        log(`firmware: ${(fw.length / 1024).toFixed(1)} KB`, 'OTA');
+
+        // 1) ENTER OTA MODE (FE 05)
+        let p = otaWaitNotify(3000);
+        await otaWrite([0xFE, 0x05], true);
+        let r = await p;
+        if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0x05)) throw new Error('no OTA-mode ack');
+        log('device in OTA mode', 'OTA');
+
+        // 2) START command (20 bytes): [00 01][--][size LE @4-7][--][CRC16 BE]
+        const start = new Uint8Array(20);
+        start[0] = 0x00; start[1] = 0x01;
+        start[4] = fw.length & 0xFF;
+        start[5] = (fw.length >> 8) & 0xFF;
+        start[6] = (fw.length >> 16) & 0xFF;
+        start[7] = (fw.length >> 24) & 0xFF;
+        const sc = otaCrc16(start.slice(0, 18));
+        start[18] = (sc >> 8) & 0xFF; start[19] = sc & 0xFF;
+        p = otaWaitNotify(3000);
+        await otaWrite(start, true);
+        r = await p;
+        // RESPONSE: [00 03][status LE @2-3]; status 0 = ACCEPT
+        if (!(r.length >= 4 && r[0] === 0x00 && r[1] === 0x03 && r[2] === 0x00 && r[3] === 0x00))
+            throw new Error('device rejected OTA start');
+        log('OTA accepted — streaming firmware…', 'OTA');
+
+        // 3) Stream sector by sector
+        const nSectors = Math.ceil(fw.length / OTA_SECTOR_SIZE);
+        const tStart = Date.now();
+        let s = 0;
+        while (s < nSectors) {
+            const data = fw.slice(s * OTA_SECTOR_SIZE, s * OTA_SECTOR_SIZE + OTA_SECTOR_SIZE);
+            const pkts = otaBuildSectorPackets(s, data);
+            let ok = false;
+            for (let attempt = 0; attempt < OTA_MAX_RETRIES && !ok; attempt++) {
+                const ackP = otaWaitNotify(OTA_ACK_TIMEOUT);   // arm before streaming
+                for (const pkt of pkts) await otaWrite(pkt, false);
+                let ack;
+                try { ack = await ackP; }
+                catch (e) { log(`sector ${s}: no ACK, retry ${attempt + 1}`, 'OTA'); continue; }
+                if (ack.length < 4) { log(`sector ${s}: bad ACK`, 'OTA'); continue; }
+                const ackSector = ack[0] | (ack[1] << 8);
+                const status    = ack[2] | (ack[3] << 8);
+                if (status === 0x0000) { ok = true; }
+                else if (status === 0x0002) { s = ackSector; ok = true; }   // resync
+                else { log(`sector ${s}: NACK status ${status}, retry ${attempt + 1}`, 'OTA'); }
+            }
+            if (!ok) throw new Error(`sector ${s} failed after ${OTA_MAX_RETRIES} retries`);
+            s++;
+            otaSetProgress((s / nSectors) * 100);
+        }
+        const secs = ((Date.now() - tStart) / 1000).toFixed(1);
+        log(`OTA complete — ${nSectors} sectors in ${secs}s. Device is verifying and rebooting.`, 'OTA');
+        log('BLE will disconnect on reboot — this is normal.', 'OTA');
+    } catch (e) {
+        log(`OTA FAILED: ${e.message || e}`, 'OTA');
+    } finally {
+        btn.disabled = false; cbtn.disabled = false;
+    }
+}
+
+let otaCustomBin = null;
+document.getElementById('otaFile').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) { otaCustomBin = f; document.getElementById('otaFileLabel').textContent = `custom: ${f.name}`; }
+});
+document.getElementById('otaConnectBtn').addEventListener('click', otaConnect);
+document.getElementById('otaUpdateBtn').addEventListener('click', async () => {
+    try {
+        let binData;
+        if (otaCustomBin) {
+            log(`using custom firmware: ${otaCustomBin.name}`, 'OTA');
+            binData = await otaCustomBin.arrayBuffer();
+        } else {
+            log('downloading STANDALONE firmware…', 'OTA');
+            const res = await fetch(`${FIRMWARE_BASE}/STANDALONE/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+            if (!res.ok) { log(`HTTP ${res.status} fetching firmware`, 'OTA'); return; }
+            binData = await res.arrayBuffer();
+        }
+        await otaRunUpdate(binData);
+    } catch (e) {
+        log(`OTA error: ${e.message || e}`, 'OTA');
+    }
+});
+
+if (!navigator.bluetooth) {
+    document.getElementById('otaInfo').textContent =
+        'Web Bluetooth not available in this browser. Use Chrome/Edge desktop or Chrome Android (Web Bluetooth is not supported on iOS).';
+}
 </script>
 
 </body>
