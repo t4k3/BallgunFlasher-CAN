@@ -1219,7 +1219,10 @@ async function otaRunUpdate(binData) {
         start[7] = (fw.length >> 24) & 0xFF;
         const sc = otaCrc16(start.slice(0, 18));
         start[18] = (sc >> 8) & 0xFF; start[19] = sc & 0xFF;
-        p = otaWaitNotify(3000);
+        // The device erases the whole OTA flash partition before replying to
+        // START — that takes several seconds, so allow a generous timeout.
+        log('sending START — device is erasing flash partition, please wait…', 'OTA');
+        p = otaWaitNotify(20000);
         await otaWrite(start, true);
         r = await p;
         // RESPONSE: [00 03][status LE @2-3]; status 0 = ACCEPT
