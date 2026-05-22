@@ -114,6 +114,12 @@
             </div>
             <button class="btn-connect" id="standaloneConnectBtn">Connect STANDALONE</button>
             <button class="btn-update standalone" id="standaloneUpdateBtn" disabled>Flash STANDALONE CAN</button>
+            <div style="margin-top:6px;">
+                <label id="standaloneFileLabel" for="standaloneFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
+                    …or pick a custom .bin
+                </label>
+                <input type="file" id="standaloneFile" accept=".bin" style="display:none;" />
+            </div>
             <div class="progress" id="standaloneProgress"><div class="progress-bar standalone" id="standaloneProgressBar"></div></div>
             <div class="chip-info" id="standaloneChipInfo"></div>
             <div class="mac-readout" id="standaloneMac"></div>
@@ -129,8 +135,7 @@
                 <div class="status-dot" id="otaStatusDot"></div>
                 <span id="otaStatusText">Disconnected</span>
             </div>
-            <button class="btn-connect" id="otaConnectBtn">Connect via Bluetooth</button>
-            <button class="btn-update ota" id="otaUpdateBtn" disabled>Update firmware (OTA)</button>
+            <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update (OTA)</button>
             <div style="margin-top:6px;">
                 <label id="otaFileLabel" for="otaFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
                     …or pick a custom .bin
@@ -1137,7 +1142,7 @@ async function otaWrite(bytes, withResponse) {
 async function otaConnect() {
     if (!navigator.bluetooth) {
         log('Web Bluetooth NOT available — use Chrome/Edge desktop or Chrome Android (not iOS)', 'OTA');
-        return;
+        return false;
     }
     try {
         log('requesting Bluetooth device (filter: name "wazlley")…', 'OTA');
@@ -1147,7 +1152,6 @@ async function otaConnect() {
         });
         ota.device.addEventListener('gattserverdisconnected', () => {
             otaSetStatus(false, 'Disconnected');
-            document.getElementById('otaUpdateBtn').disabled = true;
             log('BLE disconnected', 'OTA');
         });
         log(`connecting to ${ota.device.name}…`, 'OTA');
@@ -1157,11 +1161,12 @@ async function otaConnect() {
         await ota.char.startNotifications();
         ota.char.addEventListener('characteristicvaluechanged', otaOnNotify);
         otaSetStatus(true, `Connected: ${ota.device.name}`);
-        document.getElementById('otaUpdateBtn').disabled = false;
-        log(`connected to ${ota.device.name} — ready for OTA`, 'OTA');
+        log(`connected to ${ota.device.name}`, 'OTA');
+        return true;
     } catch (e) {
         log(`connect failed: ${e.message || e}`, 'OTA');
         otaSetStatus(false, 'Disconnected');
+        return false;
     }
 }
 
@@ -1196,9 +1201,8 @@ function otaBuildSectorPackets(sectorIndex, data) {
 }
 
 async function otaRunUpdate(binData) {
-    const btn = document.getElementById('otaUpdateBtn');
     const cbtn = document.getElementById('otaConnectBtn');
-    btn.disabled = true; cbtn.disabled = true;
+    cbtn.disabled = true;
     try {
         const fw = new Uint8Array(binData);
         log(`firmware: ${(fw.length / 1024).toFixed(1)} KB`, 'OTA');
@@ -1261,7 +1265,7 @@ async function otaRunUpdate(binData) {
     } catch (e) {
         log(`OTA FAILED: ${e.message || e}`, 'OTA');
     } finally {
-        btn.disabled = false; cbtn.disabled = false;
+        cbtn.disabled = false;
     }
 }
 
@@ -1270,9 +1274,13 @@ document.getElementById('otaFile').addEventListener('change', (e) => {
     const f = e.target.files[0];
     if (f) { otaCustomBin = f; document.getElementById('otaFileLabel').textContent = `custom: ${f.name}`; }
 });
-document.getElementById('otaConnectBtn').addEventListener('click', otaConnect);
-document.getElementById('otaUpdateBtn').addEventListener('click', async () => {
+
+// Single button: connect AND immediately run the OTA — no human-paced gap
+// between connecting and starting the upload.
+document.getElementById('otaConnectBtn').addEventListener('click', async () => {
     try {
+        const connected = await otaConnect();
+        if (!connected) return;
         let binData;
         if (otaCustomBin) {
             log(`using custom firmware: ${otaCustomBin.name}`, 'OTA');
