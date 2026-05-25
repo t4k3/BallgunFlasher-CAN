@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.2.2</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.0</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -149,7 +149,45 @@
             </div>
         </div>
 
-        <!-- NEXTION -->
+        <!-- NEXTION via Bluetooth (wireless .tft update) -->
+        <div class="device-panel nextion">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="8" r="2" fill="currentColor"/></svg>
+                NEXTION BLE <span style="font-size:0.65em; opacity:0.7;">via Bluetooth (wireless)</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="nbleStatusDot"></div>
+                <span id="nbleStatusText">Disconnected</span>
+            </div>
+            <button class="btn-update" id="nbleConnectBtn" style="background:#ff9800;">Connect &amp; Update Nextion (BLE)</button>
+            <!-- Model picker (sync'd with USB-Nextion panel below) -->
+            <div style="margin:8px 0 4px; display:flex; gap:8px;">
+                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #ff9800; border-radius:8px; text-align:center; font-size:13px;" id="nbleSquareLabel">
+                    <input type="radio" name="nbleModel" value="square" checked style="margin-right:6px;">
+                    <strong>Square</strong><br>
+                    <span style="font-size:10px; color:#888;">NX4827P043 · 4.3"</span>
+                </label>
+                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #444; border-radius:8px; text-align:center; font-size:13px;" id="nbleCircleLabel">
+                    <input type="radio" name="nbleModel" value="circle" style="margin-right:6px;">
+                    <strong>Circle</strong><br>
+                    <span style="font-size:10px; color:#888;">NX4848E028 · 2.8" round</span>
+                </label>
+            </div>
+            <div style="margin-top:6px;">
+                <label id="nbleFileLabel" for="nbleFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
+                    …or pick a custom .tft
+                </label>
+                <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
+            </div>
+            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
+            <div class="chip-info" id="nbleInfo">
+                Wireless .tft update over BLE — no cable. Chrome/Edge desktop or Chrome Android only
+                (Web Bluetooth is not available on iOS).
+            </div>
+        </div>
+
+        <!-- NEXTION via USB-Serial-JTAG (production tool) -->
         <div class="device-panel nextion">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/></svg>
@@ -185,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.2.2</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.0 · Nextion BLE</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1356,7 +1394,405 @@ document.getElementById('otaConnectBtn').addEventListener('click', async () => {
 if (!navigator.bluetooth) {
     document.getElementById('otaInfo').textContent =
         'Web Bluetooth not available in this browser. Use Chrome/Edge desktop or Chrome Android (Web Bluetooth is not supported on iOS).';
+    document.getElementById('nbleInfo').textContent =
+        'Web Bluetooth not available in this browser. Use Chrome/Edge desktop or Chrome Android.';
 }
+
+//=============================================================================
+// NEXTION via Bluetooth (Web Bluetooth) — wireless .tft update.
+// Implements the BLE wrapper protocol in ballgun_STANDALONE_CANBUS/Source/NextionUpdate.{c,h}.
+//
+// Protocol summary (host → device):
+//   FE 03                              enter passthrough         → wait FE 03 00
+//   FE 07 <baud LE 4>                  set UART baud             → wait FE 07 00
+//   FE 04 <size LE 4>                  filesize info (optional)  → wait FE 04 00
+//   FE 00                              exit passthrough          → wait FE 00 00
+//   <raw bytes>                        forwarded byte-for-byte to display while in passthrough
+//
+// Device → host notifications:
+//   FE 12 <len_lo> <len_hi> <data...>  Nextion UART response (display ACKs, comok, etc.)
+//   FE E0 <error_code>                 protocol error
+//
+// IMPORTANT: while in passthrough, the firmware still inspects the first two
+// bytes of every BLE write. If a chunk starts with FE plus a known command
+// byte (00/03/04/07/0F), it is swallowed as a wrapper command and NOT
+// forwarded to the display. To stream binary .tft data safely we split any
+// chunk that begins with 0xFE into a 1-byte write + the rest.
+//=============================================================================
+const NBLE_UART_BAUD   = 115200;
+const NBLE_CHUNK_SIZE  = 4096;      // logical Nextion chunk size (matches whmi-wris)
+const NBLE_BLE_WRITE   = 200;       // BLE write-without-response payload (conservative for any MTU)
+const NBLE_ACK_TIMEOUT = 15000;     // ms — Nextion ACK can be slow under erase
+
+const nble = {
+    device: null, server: null, char: null,
+    rxBuf: new Uint8Array(0),       // accumulated FE 12 payload bytes (Nextion responses)
+    rxWaiters: [],                  // resolvers waiting for forwarded UART bytes
+    cmdWaiters: [],                 // resolvers waiting for FE-prefix wrapper ACK
+    tftFile: null,
+};
+
+function nbleSetStatus(connected, text) {
+    document.getElementById('nbleStatusDot').classList.toggle('connected', connected);
+    document.getElementById('nbleStatusText').textContent = text;
+}
+function nbleSetProgress(pct) {
+    const bar = document.getElementById('nbleProgress');
+    bar.style.display = 'block';
+    document.getElementById('nbleProgressBar').style.width = pct.toFixed(1) + '%';
+}
+function nbleSelectedModel() {
+    const sel = document.querySelector('input[name="nbleModel"]:checked');
+    return sel ? sel.value : 'square';
+}
+function nbleSelectedTft() {
+    return NEXTION_TFTS[nbleSelectedModel()] || NEXTION_TFTS.square;
+}
+
+// Refresh the Default: label and the radio borders when model changes.
+function nbleRefreshModelUI() {
+    const tft = nbleSelectedTft();
+    const lbl = document.getElementById('nbleDefaultLabel');
+    if (lbl && !nble.tftFile) {
+        lbl.innerHTML = `Default: <code>${tft.path}</code> (${tft.model})`;
+    }
+    document.querySelectorAll('input[name="nbleModel"]').forEach(r => {
+        r.parentElement.style.borderColor = r.checked ? '#ff9800' : '#444';
+    });
+}
+document.querySelectorAll('input[name="nbleModel"]').forEach(r => {
+    r.addEventListener('change', nbleRefreshModelUI);
+});
+setTimeout(nbleRefreshModelUI, 0);
+
+document.getElementById('nbleFile').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) {
+        nble.tftFile = f;
+        document.getElementById('nbleFileLabel').textContent = `Custom: ${f.name} (${(f.size/1024).toFixed(2)} KB)`;
+    }
+});
+
+function nbleOnNotify(ev) {
+    const v = new Uint8Array(ev.target.value.buffer);
+    // FE 12 <len_lo> <len_hi> <data...>  — Nextion UART response wrapper
+    if (v.length >= 4 && v[0] === 0xFE && v[1] === 0x12) {
+        const declaredLen = v[2] | (v[3] << 8);
+        const payload = v.slice(4, 4 + declaredLen);
+        // Append payload to rxBuf, then notify any waiter.
+        const merged = new Uint8Array(nble.rxBuf.length + payload.length);
+        merged.set(nble.rxBuf, 0);
+        merged.set(payload, nble.rxBuf.length);
+        nble.rxBuf = merged;
+        // Wake the next data-waiter with the entire accumulated buffer.
+        if (nble.rxWaiters.length > 0) {
+            const w = nble.rxWaiters.shift();
+            w(nble.rxBuf);
+        }
+        return;
+    }
+    // FE <cmd> <status>  — wrapper command ACK
+    if (v.length >= 2 && v[0] === 0xFE && v[1] !== 0x12) {
+        if (nble.cmdWaiters.length > 0) {
+            const w = nble.cmdWaiters.shift();
+            w(v);
+        }
+        return;
+    }
+}
+
+// Wait for any UART data to arrive from the display. Resolves with the
+// CURRENT contents of rxBuf as soon as new bytes land. Caller is responsible
+// for consuming bytes from nble.rxBuf and clearing what they've used.
+function nbleWaitForData(timeoutMs) {
+    return new Promise((resolve, reject) => {
+        // If there are already bytes buffered, resolve immediately.
+        if (nble.rxBuf.length > 0) { resolve(nble.rxBuf); return; }
+        const t = setTimeout(() => {
+            const i = nble.rxWaiters.indexOf(resolve);
+            if (i >= 0) nble.rxWaiters.splice(i, 1);
+            reject(new Error('timeout'));
+        }, timeoutMs);
+        nble.rxWaiters.push((v) => { clearTimeout(t); resolve(v); });
+    });
+}
+// Wait for a specific byte to appear in rxBuf, then return the (consumed)
+// bytes up to and including it. Bytes after that byte stay in rxBuf for the
+// next caller. Polls every time new data lands.
+async function nbleWaitForByte(target, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+        const idx = nble.rxBuf.indexOf(target);
+        if (idx >= 0) {
+            const consumed = nble.rxBuf.slice(0, idx + 1);
+            nble.rxBuf = nble.rxBuf.slice(idx + 1);
+            return consumed;
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error(`timeout waiting for 0x${target.toString(16)}`);
+        try { await nbleWaitForData(remaining); } catch { throw new Error(`timeout waiting for 0x${target.toString(16)}`); }
+    }
+}
+function nbleWaitForAck(timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => {
+            const i = nble.cmdWaiters.indexOf(resolve);
+            if (i >= 0) nble.cmdWaiters.splice(i, 1);
+            reject(new Error('ACK timeout'));
+        }, timeoutMs);
+        nble.cmdWaiters.push((v) => { clearTimeout(t); resolve(v); });
+    });
+}
+
+async function nbleWrite(bytes, withResponse) {
+    const buf = (bytes instanceof Uint8Array) ? bytes : Uint8Array.from(bytes);
+    if (withResponse) {
+        await nble.char.writeValueWithResponse(buf);
+    } else if (nble.char.writeValueWithoutResponse) {
+        await nble.char.writeValueWithoutResponse(buf);
+    } else {
+        await nble.char.writeValue(buf);
+    }
+}
+
+// Send a passthrough wrapper command (FE <cmd> [args]) and wait for its ACK.
+async function nbleSendCmd(cmdBytes, timeoutMs = 5000) {
+    const p = nbleWaitForAck(timeoutMs);
+    await nbleWrite(cmdBytes, true);
+    return p;
+}
+
+// Forward raw bytes to the Nextion. Splits any write that would start with
+// 0xFE: sends the leading 0xFE alone (1-byte writes bypass the FE+cmd check
+// because the firmware requires size >= 2 to interpret it as a command),
+// then the rest.
+async function nbleForwardRaw(bytes) {
+    let off = 0;
+    while (off < bytes.length) {
+        let end = Math.min(off + NBLE_BLE_WRITE, bytes.length);
+        let chunk = bytes.slice(off, end);
+        if (chunk.length >= 2 && chunk[0] === 0xFE) {
+            await nbleWrite(chunk.slice(0, 1), false);
+            chunk = chunk.slice(1);
+        }
+        await nbleWrite(chunk, false);
+        off = end;
+    }
+}
+
+async function nbleConnect() {
+    if (!navigator.bluetooth) {
+        log('Web Bluetooth NOT available — use Chrome/Edge desktop or Chrome Android', 'NEXTION-BLE');
+        return false;
+    }
+    try {
+        log('requesting Bluetooth device (filter: name "wazlley")…', 'NEXTION-BLE');
+        nble.device = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: 'wazlley' }],
+            optionalServices: [OTA_SERVICE_UUID],
+        });
+        nble.device.addEventListener('gattserverdisconnected', () => {
+            nbleSetStatus(false, 'Disconnected');
+            log('BLE disconnected', 'NEXTION-BLE');
+        });
+        log(`connecting to ${nble.device.name}…`, 'NEXTION-BLE');
+        nble.server = await nble.device.gatt.connect();
+        const svc   = await nble.server.getPrimaryService(OTA_SERVICE_UUID);
+        nble.char   = await svc.getCharacteristic(OTA_CHAR_UUID);
+        await nble.char.startNotifications();
+        nble.char.addEventListener('characteristicvaluechanged', nbleOnNotify);
+        nble.rxBuf = new Uint8Array(0);
+        nble.rxWaiters = [];
+        nble.cmdWaiters = [];
+        nbleSetStatus(true, `Connected: ${nble.device.name}`);
+        log(`connected to ${nble.device.name}`, 'NEXTION-BLE');
+        return true;
+    } catch (e) {
+        log(`connect failed: ${e.message || e}`, 'NEXTION-BLE');
+        nbleSetStatus(false, 'Disconnected');
+        return false;
+    }
+}
+
+async function nbleRunUpdate(tftData) {
+    const cbtn = document.getElementById('nbleConnectBtn');
+    cbtn.disabled = true;
+    nbleSetProgress(0);
+    log(`=== NEXTION BLE UPDATE: ${tftData.name} (${tftData.size} B / ${(tftData.size/1024).toFixed(2)} KB) ===`, 'NEXTION-BLE');
+    try {
+        // 1) ENTER PASSTHROUGH (FE 03) — ACK is FE 03 00
+        log('entering passthrough mode…', 'NEXTION-BLE');
+        const ack1 = await nbleSendCmd([0xFE, 0x03], 5000);
+        if (!(ack1.length >= 3 && ack1[0] === 0xFE && ack1[1] === 0x03 && ack1[2] === 0x00))
+            throw new Error('no passthrough-mode ACK');
+        log('passthrough active', 'NEXTION-BLE');
+        nbleSetProgress(2);
+
+        // 2) Set UART baud explicitly (FE 07 <baud LE>)
+        const b = NBLE_UART_BAUD;
+        const ack2 = await nbleSendCmd([0xFE, 0x07, b & 0xFF, (b >> 8) & 0xFF, (b >> 16) & 0xFF, (b >> 24) & 0xFF], 3000);
+        if (!(ack2.length >= 3 && ack2[1] === 0x07 && ack2[2] === 0x00))
+            throw new Error('no baud-set ACK');
+        log(`UART baud set to ${b}`, 'NEXTION-BLE');
+
+        // 3) "connect" → expect "comok ..." inside an FE 12 wrapper.
+        nble.rxBuf = new Uint8Array(0);
+        const enc = new TextEncoder();
+        await nbleForwardRaw(enc.encode('connect'));
+        await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
+        let comokBytes = new Uint8Array(0);
+        try {
+            // Wait for terminator 0xFF then drain any leading FF padding etc.
+            await nbleWaitForByte(0xFF, 3000);
+        } catch { /* fall through — may already be buffered */ }
+        // Give the display a brief moment to spill the rest.
+        await new Promise(r => setTimeout(r, 200));
+        comokBytes = nble.rxBuf.slice();
+        const comokText = new TextDecoder().decode(comokBytes).replace(/[\xff\x00]/g, '');
+        log(`comok response: ${comokText}`, 'NEXTION-BLE');
+        // Parse for fwVersion (selects whmi-wris flag like the USB path).
+        let detectedFw = null;
+        const parts = comokText.split(',');
+        const mIdx = parts.findIndex(p => /^NX/i.test(p.trim()));
+        if (mIdx > 0 && parts.length > mIdx + 1) {
+            const m = parts[mIdx].trim();
+            const v = parseInt(parts[mIdx + 1], 10);
+            if (!isNaN(v)) detectedFw = v;
+            log(`  Model: ${m}, fwVersion: ${isNaN(v) ? 'unknown' : v}`, 'NEXTION-BLE');
+        }
+        nble.rxBuf = new Uint8Array(0);
+
+        // 4) whmi-wris <filesize>,<baud>,<flag>\xFF\xFF\xFF
+        const uploadFlag = (typeof detectedFw === 'number' && detectedFw < 250) ? 0 : 1;
+        const uploadCmd = `whmi-wris ${tftData.size},${b},${uploadFlag}`;
+        log(`upload cmd: ${uploadCmd} (fw=${detectedFw} → flag ${uploadFlag})`, 'NEXTION-BLE');
+        await nbleForwardRaw(enc.encode(uploadCmd));
+        await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
+
+        // 5) Wait for first 0x05 — display ready to receive chunks.
+        await nbleWaitForByte(0x05, 15000);
+        log('display ready — streaming chunks', 'NEXTION-BLE');
+        nble.rxBuf = new Uint8Array(0);
+        nbleSetProgress(5);
+
+        // 6) Stream the .tft in 4 KB chunks, drive by 0x05 / 0x08 frames.
+        const data = tftData.data;
+        const fileSize = tftData.size;
+        let filePos = 0;
+        let chunksSent = 0;
+        let frame05Count = 0;
+        let frame08Count = 0;
+        const tStart = Date.now();
+
+        // First chunk goes out immediately after the initial 0x05.
+        {
+            const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
+            await nbleForwardRaw(data.slice(filePos, end));
+            filePos = end; chunksSent++;
+        }
+
+        while (filePos < fileSize) {
+            // Wait for either 0x05 or 0x08 from the display.
+            const tFrame = Date.now();
+            let frameByte = -1;
+            let off = 0;
+            while (Date.now() - tFrame < NBLE_ACK_TIMEOUT) {
+                if (nble.rxBuf.length >= 1) {
+                    if (nble.rxBuf[0] === 0x05) {
+                        frameByte = 0x05;
+                        nble.rxBuf = nble.rxBuf.slice(1);
+                        frame05Count++;
+                        break;
+                    } else if (nble.rxBuf[0] === 0x08 && nble.rxBuf.length >= 5) {
+                        off = nble.rxBuf[1] | (nble.rxBuf[2] << 8) | (nble.rxBuf[3] << 16) | (nble.rxBuf[4] << 24);
+                        frameByte = 0x08;
+                        nble.rxBuf = nble.rxBuf.slice(5);
+                        frame08Count++;
+                        log(`  0x08 skip frame @ chunk ${chunksSent}: off=${off}, filePos was ${filePos}`, 'NEXTION-BLE');
+                        break;
+                    } else if (nble.rxBuf[0] !== 0x05 && nble.rxBuf[0] !== 0x08) {
+                        const hex = Array.from(nble.rxBuf.slice(0,8)).map(x=>x.toString(16).padStart(2,'0')).join(' ');
+                        log(`  ⚠ unexpected frame: [${hex}] — discarding 1 byte`, 'NEXTION-BLE');
+                        nble.rxBuf = nble.rxBuf.slice(1);
+                    }
+                }
+                try { await nbleWaitForData(500); } catch { /* keep polling until timeout above */ }
+            }
+            if (frameByte < 0) throw new Error(`no display ACK after chunk ${chunksSent} (filePos=${filePos})`);
+
+            if (frameByte === 0x08) {
+                if (off >= fileSize) { filePos = fileSize; break; }
+                filePos = off;
+            }
+            const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
+            await nbleForwardRaw(data.slice(filePos, end));
+            filePos = end; chunksSent++;
+
+            const pct = 5 + (filePos / fileSize) * 90;
+            nbleSetProgress(pct);
+            if (chunksSent % 10 === 0 || filePos >= fileSize) {
+                const elapsed = ((Date.now() - tStart) / 1000).toFixed(1);
+                log(`  ${Math.round(filePos/1024)}/${Math.round(fileSize/1024)} KB (${(filePos*100/fileSize).toFixed(0)}%) — ${chunksSent} chunks, ${elapsed}s`, 'NEXTION-BLE');
+            }
+        }
+        const totalSecs = ((Date.now() - tStart) / 1000).toFixed(1);
+        log(`upload complete: ${chunksSent} chunks (0x05=${frame05Count}, 0x08=${frame08Count}) in ${totalSecs}s`, 'NEXTION-BLE');
+        nbleSetProgress(96);
+
+        // 7) Post-upload sniff window — capture success ACK / boot event from the display.
+        await new Promise(r => setTimeout(r, 2500));
+        if (nble.rxBuf.length > 0) {
+            const hex = Array.from(nble.rxBuf.slice(0, 32)).map(x=>x.toString(16).padStart(2,'0')).join(' ');
+            log(`post-upload bytes (${nble.rxBuf.length}): ${hex}${nble.rxBuf.length>32?' …':''}`, 'NEXTION-BLE');
+            // Look for the canonical success pattern "05 00 00 00 ff ff ff".
+            const buf = nble.rxBuf;
+            let ok = false;
+            for (let i = 0; i + 7 <= buf.length; i++) {
+                if (buf[i]===0x05 && buf[i+1]===0x00 && buf[i+2]===0x00 && buf[i+3]===0x00 &&
+                    buf[i+4]===0xFF && buf[i+5]===0xFF && buf[i+6]===0xFF) { ok = true; break; }
+            }
+            if (ok) log('✅ display ACKed success (05 00 00 00 FF FF FF)', 'NEXTION-BLE');
+            else log('⚠ no success-ACK pattern seen — display may show data error at reboot', 'NEXTION-BLE');
+        }
+
+        // 8) Exit passthrough (FE 00). May not get an ACK if the display already
+        // rebooted into the new TFT and the firmware tore down the bridge; treat
+        // a timeout here as non-fatal.
+        try { await nbleSendCmd([0xFE, 0x00], 1500); } catch { /* ignored */ }
+        nbleSetProgress(100);
+        log('NEXTION BLE UPDATE COMPLETE — display will restart on the new .tft', 'NEXTION-BLE');
+    } catch (e) {
+        log(`UPDATE FAILED: ${e.message || e}`, 'NEXTION-BLE');
+        // Best-effort exit so the device returns to normal display ops.
+        try { await nbleSendCmd([0xFE, 0x00], 1500); } catch {}
+    } finally {
+        cbtn.disabled = false;
+    }
+}
+
+document.getElementById('nbleConnectBtn').addEventListener('click', async () => {
+    try {
+        const connected = await nbleConnect();
+        if (!connected) return;
+        let tftData;
+        if (nble.tftFile) {
+            const buf = await nble.tftFile.arrayBuffer();
+            tftData = { data: new Uint8Array(buf), size: buf.byteLength, name: nble.tftFile.name };
+        } else {
+            const tft = nbleSelectedTft();
+            const url = `${FIRMWARE_BASE}/${tft.path}?cb=${Date.now()}`;
+            log(`downloading ${tft.name} (${tft.model})…`, 'NEXTION-BLE');
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const ab = await r.arrayBuffer();
+            log(`downloaded ${ab.byteLength} B (${(ab.byteLength/1024).toFixed(2)} KB)`, 'NEXTION-BLE');
+            tftData = { data: new Uint8Array(ab), size: ab.byteLength, name: tft.name };
+        }
+        await nbleRunUpdate(tftData);
+    } catch (e) {
+        log(`error: ${e.message || e}`, 'NEXTION-BLE');
+    }
+});
 </script>
 
 </body>
