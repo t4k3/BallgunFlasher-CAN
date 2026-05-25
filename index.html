@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.4</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.5</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -223,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.4 · state-query + write-error diag</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.5 · simplified flow, single shot 115200</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1664,90 +1664,54 @@ async function nbleRunUpdate(tftData) {
         log('passthrough active', 'NEXTION-BLE');
         nbleSetProgress(2);
 
-        // 2) "connect" + baud detection — expect "comok ..." inside FE 12 wrapper.
-        //    Retry at a few common baud rates: most units are at 115200, but
-        //    a fresh-programmed display defaults to 9600.
+        // 2) Set UART to 115200 (display's default) then send "connect" raw.
         const enc = new TextEncoder();
-        const bauds = [115200, 9600, 57600, 38400];
+        const workingBaud = 115200;
+        try {
+            const a = await nbleSendCmd(
+                [0xFE, 0x07, workingBaud & 0xFF, (workingBaud >> 8) & 0xFF, (workingBaud >> 16) & 0xFF, (workingBaud >> 24) & 0xFF],
+                3000
+            );
+            if (!(a && a[1] === 0x07 && a[2] === 0x00)) throw new Error('FE 07 not ACKed');
+        } catch (e) {
+            throw new Error(`baud set failed: ${e.message || e}`);
+        }
+        log(`UART baud set to ${workingBaud}`, 'NEXTION-BLE');
+
+        // Single combined write: "connect\xFF\xFF\xFF" — 10 bytes in one packet
+        // so the firmware forwards it atomically to UART.
+        nble.rxBuf = new Uint8Array(0);
+        const cmd = new Uint8Array(10);
+        cmd.set(enc.encode('connect'), 0);
+        cmd[7] = 0xFF; cmd[8] = 0xFF; cmd[9] = 0xFF;
+        await nbleForwardRaw(cmd);
+        log('sent "connect" — waiting for comok…', 'NEXTION-BLE');
+
+        // Wait up to 5 s for the comok response. The display responds in
+        // milliseconds when alive; 5 s is generous for BLE notify delivery.
         let comokBytes = new Uint8Array(0);
         let comokText = '';
-        let workingBaud = 0;
-        for (const tryBaud of bauds) {
-            // Before each attempt verify the bridge is still in passthrough.
-            // FE 0F → expect FE 0F <state>; state==1 means STATE_PASSTHROUGH.
-            try {
-                const q = await nbleSendCmd([0xFE, 0x0F], 2000);
-                log(`  bridge state query: ${Array.from(q).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`, 'NEXTION-BLE');
-                if (q.length >= 3 && q[2] !== 1) {
-                    log(`  ⚠ bridge no longer in passthrough (state=${q[2]}) — re-entering`, 'NEXTION-BLE');
-                    const r = await nbleSendCmd([0xFE, 0x03], 3000).catch(e => null);
-                    if (!r || r[1] !== 0x03) throw new Error('re-enter passthrough failed');
-                }
-            } catch (e) {
-                log(`  state query failed: ${e.message || e}`, 'NEXTION-BLE');
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+            while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
+                nble.rxBuf = nble.rxBuf.slice(1);
             }
-
-            // Set the ESP32-side UART to this baud.
-            let a;
-            try {
-                a = await nbleSendCmd(
-                    [0xFE, 0x07, tryBaud & 0xFF, (tryBaud >> 8) & 0xFF, (tryBaud >> 16) & 0xFF, (tryBaud >> 24) & 0xFF],
-                    2000
-                );
-            } catch (e) {
-                log(`  baud ${tryBaud}: FE 07 error: ${e.message || e}`, 'NEXTION-BLE');
-                a = null;
+            const ffIdx = nble.rxBuf.indexOf(0xFF);
+            if (ffIdx >= 0) {
+                comokBytes = nble.rxBuf.slice(0, ffIdx + 1);
+                nble.rxBuf = nble.rxBuf.slice(ffIdx + 1);
+                comokText = new TextDecoder().decode(comokBytes).replace(/[\xff\x00]/g, '').trim();
+                break;
             }
-            if (!a || a[1] !== 0x07 || a[2] !== 0x00) {
-                log(`  baud ${tryBaud}: bridge did not ACK (got: ${a ? Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(' ') : 'null'})`, 'NEXTION-BLE');
-                continue;
-            }
-            nble.rxBuf = new Uint8Array(0);
-            await nbleForwardRaw(enc.encode('connect'));
-            await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
-            // Robust comok capture: drain any leading FF padding (UART noise
-            // or framing residue) before looking for the response terminator.
-            // The real Nextion response always starts with printable ASCII
-            // ("comok ..."); leading FFs are not part of it.
-            let gotComok = false;
-            const deadline = Date.now() + 2000;
-            while (Date.now() < deadline) {
-                while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
-                    nble.rxBuf = nble.rxBuf.slice(1);
-                }
-                const ffIdx = nble.rxBuf.indexOf(0xFF);
-                if (ffIdx >= 0) {
-                    comokBytes = nble.rxBuf.slice(0, ffIdx + 1);
-                    nble.rxBuf = nble.rxBuf.slice(ffIdx + 1);
-                    comokText = new TextDecoder().decode(comokBytes).replace(/[\xff\x00]/g, '').trim();
-                    if (comokText.startsWith('comok')) {
-                        workingBaud = tryBaud;
-                        // Drain remaining FF padding bytes that follow.
-                        await new Promise(r => setTimeout(r, 150));
-                        while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
-                            nble.rxBuf = nble.rxBuf.slice(1);
-                        }
-                        gotComok = true;
-                    } else {
-                        log(`  baud ${tryBaud}: garbled (${comokBytes.length} bytes, not "comok")`, 'NEXTION-BLE');
-                    }
-                    break;
-                }
-                try { await nbleWaitForData(Math.max(50, deadline - Date.now())); } catch { break; }
-            }
-            if (gotComok) break;
-            if (!gotComok) {
-                // Dump whatever non-FF data ended up in the buffer for diagnostics.
-                if (nble.rxBuf.length > 0) {
-                    const hex = Array.from(nble.rxBuf.slice(0, 32)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
-                    log(`  baud ${tryBaud}: no terminator. rxBuf (${nble.rxBuf.length} B): ${hex}${nble.rxBuf.length>32?' …':''}`, 'NEXTION-BLE');
-                    nble.rxBuf = new Uint8Array(0);
-                } else {
-                    log(`  baud ${tryBaud}: no response (rxBuf empty)`, 'NEXTION-BLE');
-                }
-            }
+            try { await nbleWaitForData(Math.max(50, deadline - Date.now())); } catch { break; }
         }
-        if (!workingBaud) throw new Error('Nextion silent at all tried baud rates');
+        if (!comokText.startsWith('comok')) {
+            // Diagnostics: any non-FF data still in buffer?
+            const dump = nble.rxBuf.length > 0
+                ? Array.from(nble.rxBuf.slice(0, 32)).map(b=>b.toString(16).padStart(2,'0')).join(' ')
+                : '(rxBuf empty)';
+            throw new Error(`no comok within 5 s. rxBuf: ${dump}`);
+        }
         log(`Nextion at ${workingBaud}: ${comokText}`, 'NEXTION-BLE');
         // Parse for fwVersion (selects whmi-wris flag like the USB path).
         let detectedFw = null;
