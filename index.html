@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal)</title>
+<title>Ballgun CAN Flasher (internal) v20.4.10</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,6 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">v20.4.10 · chunk-padded</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -712,11 +713,15 @@ async function nextionUpdate(tftData) {
                 const resp = await nextionReadUntilByte(0xFF, 2000);
                 const cleanText = new TextDecoder().decode(resp).replace(/[\xff]/g,'').replace(/\x00/g,'');
                 log(`  Nextion at ${baud}: ${cleanText}`, 'NEXTION');
-                // Parse: comok <touch>,<model>,<fwVersion>,<mcucode>,<serial>,<flashSize>
+                // Parse comok response. Two known formats:
+                //   Enhanced/P:    "comok <touch>,<model>,<fwVersion>,<mcucode>,<serial>,<flashSize>"
+                //   Intelligent:   "comok <touch>,<dispCode>,<model>,<fwVersion>,<mcucode>,<serial>,<flashSize>"
+                // The model field is identified by starting with "NX".
                 const parts = cleanText.split(',');
-                if (parts.length >= 4) {
-                    const model = parts[1] || 'unknown';
-                    const fwVersion = parseInt(parts[2], 10);
+                let modelIdx = parts.findIndex(p => /^NX/i.test(p.trim()));
+                if (modelIdx > 0 && parts.length > modelIdx + 1) {
+                    const model = parts[modelIdx].trim();
+                    const fwVersion = parseInt(parts[modelIdx + 1], 10);
                     log(`  Model: ${model}, fwVersion: ${isNaN(fwVersion) ? 'unknown' : fwVersion}`, 'NEXTION');
                 }
                 detectedBaud = baud; break;
@@ -740,17 +745,34 @@ async function nextionUpdate(tftData) {
         nextionSetProgress(20);
 
         // Step 4: stream .tft in 4KB chunks, handle 0x05 (next) and 0x08 (skip offset)
+        // CRITICAL for Intelligent series (NX48xxE/T/K): every chunk MUST be
+        // exactly 4096 bytes. The final partial chunk must be padded with 0x00
+        // up to 4096 — otherwise the bootloader's final CRC32 check fails and
+        // the display reboots with "data error". P-series tolerates short
+        // final chunks; Intelligent does not.
         const fileData = tftData.data;
         const chunkSize = 4096;
         let filePos = 0;
         let chunksSent = 0;
         const uploadStart = Date.now();
 
+        // Build a chunk of exactly chunkSize, padding with 0x00 past EOF.
+        // filePos must be < fileData.length (caller's responsibility).
+        const buildChunk = (pos) => {
+            const end = Math.min(pos + chunkSize, fileData.length);
+            const realLen = end - pos;
+            if (realLen === chunkSize) return fileData.subarray(pos, end);
+            const padded = new Uint8Array(chunkSize);
+            padded.set(fileData.subarray(pos, end), 0);
+            // remaining bytes already 0x00 from new Uint8Array()
+            return padded;
+        };
+
         // First chunk immediately after initial ACK
         {
-            const end = Math.min(filePos + chunkSize, fileData.length);
-            await nextionWriter.write(fileData.slice(filePos, end));
-            filePos = end; chunksSent++;
+            await nextionWriter.write(buildChunk(filePos));
+            filePos = Math.min(filePos + chunkSize, fileData.length);
+            chunksSent++;
         }
 
         while (filePos < fileSize) {
@@ -761,18 +783,18 @@ async function nextionUpdate(tftData) {
                 if (nextionRxBuffer.length >= 1) {
                     if (nextionRxBuffer[0] === 0x05) {
                         nextionRxBuffer = new Uint8Array(0);
-                        const end = Math.min(filePos + chunkSize, fileData.length);
-                        await nextionWriter.write(fileData.slice(filePos, end));
-                        filePos = end; chunksSent++; responded = true; break;
+                        await nextionWriter.write(buildChunk(filePos));
+                        filePos = Math.min(filePos + chunkSize, fileData.length);
+                        chunksSent++; responded = true; break;
                     } else if (nextionRxBuffer[0] === 0x08 && nextionRxBuffer.length >= 5) {
                         const off = nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
                                     (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24);
                         nextionRxBuffer = new Uint8Array(0);
                         if (off >= fileSize) { filePos = fileSize; responded = true; break; }
                         filePos = off;
-                        const end = Math.min(filePos + chunkSize, fileData.length);
-                        await nextionWriter.write(fileData.slice(filePos, end));
-                        filePos = end; chunksSent++; responded = true; break;
+                        await nextionWriter.write(buildChunk(filePos));
+                        filePos = Math.min(filePos + chunkSize, fileData.length);
+                        chunksSent++; responded = true; break;
                     }
                 }
                 await new Promise(r => setTimeout(r, 20));
