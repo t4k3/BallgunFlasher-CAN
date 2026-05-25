@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.3</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.4</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -223,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.3 · diag dump on no-comok</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.4 · state-query + write-error diag</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1580,7 +1580,12 @@ async function nbleWrite(bytes, withResponse) {
 // Send a passthrough wrapper command (FE <cmd> [args]) and wait for its ACK.
 async function nbleSendCmd(cmdBytes, timeoutMs = 5000) {
     const p = nbleWaitForAck(timeoutMs);
-    await nbleWrite(cmdBytes, true);
+    try {
+        await nbleWrite(cmdBytes, true);
+    } catch (e) {
+        log(`  nbleSendCmd WRITE ERROR: ${e.message || e}`, 'NEXTION-BLE');
+        throw e;
+    }
     return p;
 }
 
@@ -1668,13 +1673,33 @@ async function nbleRunUpdate(tftData) {
         let comokText = '';
         let workingBaud = 0;
         for (const tryBaud of bauds) {
+            // Before each attempt verify the bridge is still in passthrough.
+            // FE 0F → expect FE 0F <state>; state==1 means STATE_PASSTHROUGH.
+            try {
+                const q = await nbleSendCmd([0xFE, 0x0F], 2000);
+                log(`  bridge state query: ${Array.from(q).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`, 'NEXTION-BLE');
+                if (q.length >= 3 && q[2] !== 1) {
+                    log(`  ⚠ bridge no longer in passthrough (state=${q[2]}) — re-entering`, 'NEXTION-BLE');
+                    const r = await nbleSendCmd([0xFE, 0x03], 3000).catch(e => null);
+                    if (!r || r[1] !== 0x03) throw new Error('re-enter passthrough failed');
+                }
+            } catch (e) {
+                log(`  state query failed: ${e.message || e}`, 'NEXTION-BLE');
+            }
+
             // Set the ESP32-side UART to this baud.
-            const a = await nbleSendCmd(
-                [0xFE, 0x07, tryBaud & 0xFF, (tryBaud >> 8) & 0xFF, (tryBaud >> 16) & 0xFF, (tryBaud >> 24) & 0xFF],
-                2000
-            ).catch(() => null);
+            let a;
+            try {
+                a = await nbleSendCmd(
+                    [0xFE, 0x07, tryBaud & 0xFF, (tryBaud >> 8) & 0xFF, (tryBaud >> 16) & 0xFF, (tryBaud >> 24) & 0xFF],
+                    2000
+                );
+            } catch (e) {
+                log(`  baud ${tryBaud}: FE 07 error: ${e.message || e}`, 'NEXTION-BLE');
+                a = null;
+            }
             if (!a || a[1] !== 0x07 || a[2] !== 0x00) {
-                log(`  baud ${tryBaud}: bridge did not ACK`, 'NEXTION-BLE');
+                log(`  baud ${tryBaud}: bridge did not ACK (got: ${a ? Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(' ') : 'null'})`, 'NEXTION-BLE');
                 continue;
             }
             nble.rxBuf = new Uint8Array(0);
