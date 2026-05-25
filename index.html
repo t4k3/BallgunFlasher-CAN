@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.1.0</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.1.1</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,7 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.0 · Nextion chunk-padded</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.1 · Nextion frame-trace</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -768,6 +768,11 @@ async function nextionUpdate(tftData) {
             return padded;
         };
 
+        // Per-frame trace counters for diagnostics
+        let frame05Count = 0;
+        let frame08Count = 0;
+        const frame08History = [];
+
         // First chunk immediately after initial ACK
         {
             await nextionWriter.write(buildChunk(filePos));
@@ -783,6 +788,7 @@ async function nextionUpdate(tftData) {
                 if (nextionRxBuffer.length >= 1) {
                     if (nextionRxBuffer[0] === 0x05) {
                         nextionRxBuffer = new Uint8Array(0);
+                        frame05Count++;
                         await nextionWriter.write(buildChunk(filePos));
                         filePos = Math.min(filePos + chunkSize, fileData.length);
                         chunksSent++; responded = true; break;
@@ -790,11 +796,20 @@ async function nextionUpdate(tftData) {
                         const off = nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
                                     (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24);
                         nextionRxBuffer = new Uint8Array(0);
+                        frame08Count++;
+                        if (frame08History.length < 20) frame08History.push({chunk: chunksSent, off});
+                        log(`  0x08 skip frame @ chunk ${chunksSent}: off=${off} (0x${off.toString(16)}), filePos was ${filePos}`, 'NEXTION');
                         if (off >= fileSize) { filePos = fileSize; responded = true; break; }
                         filePos = off;
                         await nextionWriter.write(buildChunk(filePos));
                         filePos = Math.min(filePos + chunkSize, fileData.length);
                         chunksSent++; responded = true; break;
+                    } else if (nextionRxBuffer.length >= 1) {
+                        // Unexpected byte — log it so we can see what's actually arriving
+                        const unknownByte = nextionRxBuffer[0];
+                        const hex = Array.from(nextionRxBuffer.slice(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+                        log(`  ⚠ unexpected frame @ chunk ${chunksSent}: first=0x${unknownByte.toString(16)} buf=[${hex}]`, 'NEXTION');
+                        nextionRxBuffer = new Uint8Array(0);
                     }
                 }
                 await new Promise(r => setTimeout(r, 20));
@@ -812,7 +827,12 @@ async function nextionUpdate(tftData) {
             }
         }
 
-        log(`upload complete: ${chunksSent} chunks in ${((Date.now()-uploadStart)/1000).toFixed(1)}s`, 'NEXTION');
+        log(`upload complete: ${chunksSent} chunks (0x05=${frame05Count}, 0x08=${frame08Count}) in ${((Date.now()-uploadStart)/1000).toFixed(1)}s`, 'NEXTION');
+        const expectedChunks = Math.ceil(fileSize / chunkSize);
+        log(`  expected chunks for ${fileSize} B file: ${expectedChunks} → actual: ${chunksSent} (diff: ${chunksSent - expectedChunks})`, 'NEXTION');
+        if (frame08History.length > 0) {
+            log(`  0x08 frames received: ${frame08History.map(f=>`@${f.chunk}→${f.off}`).join(', ')}`, 'NEXTION');
+        }
         nextionSetProgress(97);
         nextionSetStatus('Finalizing…', true);
 
