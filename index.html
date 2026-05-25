@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.1</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.2</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -223,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.1 · Nextion BLE: comok parse fix + baud retry</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.2 · Nextion BLE: audit fixes</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1478,16 +1478,29 @@ function nbleOnNotify(ev) {
     // FE 12 <len_lo> <len_hi> <data...>  — Nextion UART response wrapper
     if (v.length >= 4 && v[0] === 0xFE && v[1] === 0x12) {
         const declaredLen = v[2] | (v[3] << 8);
-        const payload = v.slice(4, 4 + declaredLen);
-        // Append payload to rxBuf, then notify any waiter.
+        const available   = v.length - 4;
+        if (available < declaredLen) {
+            log(`⚠ FE12 truncated: declared ${declaredLen}, got ${available} — using ${available}`, 'NEXTION-BLE');
+        }
+        const useLen = Math.min(declaredLen, available);
+        const payload = v.slice(4, 4 + useLen);
         const merged = new Uint8Array(nble.rxBuf.length + payload.length);
         merged.set(nble.rxBuf, 0);
         merged.set(payload, nble.rxBuf.length);
         nble.rxBuf = merged;
-        // Wake the next data-waiter with the entire accumulated buffer.
         if (nble.rxWaiters.length > 0) {
             const w = nble.rxWaiters.shift();
             w(nble.rxBuf);
+        }
+        return;
+    }
+    // FE E0 <err> — protocol error frame from the firmware
+    if (v.length >= 3 && v[0] === 0xFE && v[1] === 0xE0) {
+        log(`⚠ firmware error frame: FE E0 ${v[2].toString(16).padStart(2,'0')}`, 'NEXTION-BLE');
+        // Still pass to cmdWaiters so callers see a failure rather than time out.
+        if (nble.cmdWaiters.length > 0) {
+            const w = nble.cmdWaiters.shift();
+            w(v);
         }
         return;
     }
@@ -1501,19 +1514,26 @@ function nbleOnNotify(ev) {
     }
 }
 
-// Wait for any UART data to arrive from the display. Resolves with the
-// CURRENT contents of rxBuf as soon as new bytes land. Caller is responsible
-// for consuming bytes from nble.rxBuf and clearing what they've used.
+// Wait for the NEXT UART notify from the display (does not auto-resolve
+// with already-buffered bytes — the caller checks the buffer itself first).
+// Two reasons:
+//   1. Without this, callers polling on a partial response (e.g. comok
+//      arriving across two notifies) would spin in a tight loop reading
+//      the same rxBuf snapshot until the next notify event drained the
+//      microtask queue. Functional but burns CPU.
+//   2. The waiter cleanup needs a stable reference for splicing on
+//      timeout; pushing an anonymous closure and trying to find it by
+//      `resolve` would never match, leaking the wrapper.
 function nbleWaitForData(timeoutMs) {
     return new Promise((resolve, reject) => {
-        // If there are already bytes buffered, resolve immediately.
-        if (nble.rxBuf.length > 0) { resolve(nble.rxBuf); return; }
+        let waiter;
         const t = setTimeout(() => {
-            const i = nble.rxWaiters.indexOf(resolve);
+            const i = nble.rxWaiters.indexOf(waiter);
             if (i >= 0) nble.rxWaiters.splice(i, 1);
             reject(new Error('timeout'));
         }, timeoutMs);
-        nble.rxWaiters.push((v) => { clearTimeout(t); resolve(v); });
+        waiter = (v) => { clearTimeout(t); resolve(v); };
+        nble.rxWaiters.push(waiter);
     });
 }
 // Wait for a specific byte to appear in rxBuf, then return the (consumed)
@@ -1535,12 +1555,14 @@ async function nbleWaitForByte(target, timeoutMs) {
 }
 function nbleWaitForAck(timeoutMs) {
     return new Promise((resolve, reject) => {
+        let waiter;
         const t = setTimeout(() => {
-            const i = nble.cmdWaiters.indexOf(resolve);
+            const i = nble.cmdWaiters.indexOf(waiter);
             if (i >= 0) nble.cmdWaiters.splice(i, 1);
             reject(new Error('ACK timeout'));
         }, timeoutMs);
-        nble.cmdWaiters.push((v) => { clearTimeout(t); resolve(v); });
+        waiter = (v) => { clearTimeout(t); resolve(v); };
+        nble.cmdWaiters.push(waiter);
     });
 }
 
@@ -1565,18 +1587,27 @@ async function nbleSendCmd(cmdBytes, timeoutMs = 5000) {
 // Forward raw bytes to the Nextion. Splits any write that would start with
 // 0xFE: sends the leading 0xFE alone (1-byte writes bypass the FE+cmd check
 // because the firmware requires size >= 2 to interpret it as a command),
-// then the rest.
+// then the rest. Yields a microtask after every 4 writes so Chrome's BLE
+// transmit queue can drain without overflowing on big bursts.
 async function nbleForwardRaw(bytes) {
     let off = 0;
+    let writesSinceYield = 0;
     while (off < bytes.length) {
         let end = Math.min(off + NBLE_BLE_WRITE, bytes.length);
         let chunk = bytes.slice(off, end);
         if (chunk.length >= 2 && chunk[0] === 0xFE) {
             await nbleWrite(chunk.slice(0, 1), false);
             chunk = chunk.slice(1);
+            writesSinceYield++;
         }
         await nbleWrite(chunk, false);
+        writesSinceYield++;
         off = end;
+        if (writesSinceYield >= 4) {
+            // Let the BLE host task drain its queue + let notify events fire.
+            await new Promise(r => setTimeout(r, 0));
+            writesSinceYield = 0;
+        }
     }
 }
 
@@ -1649,27 +1680,38 @@ async function nbleRunUpdate(tftData) {
             nble.rxBuf = new Uint8Array(0);
             await nbleForwardRaw(enc.encode('connect'));
             await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
-            // Wait up to 2 s for any non-FF byte to arrive.
-            try {
-                const consumed = await nbleWaitForByte(0xFF, 2000);
-                // `consumed` holds everything up to and including the first FF
-                // terminator — i.e. the full "comok 2,..." string.
-                comokBytes = consumed;
-                comokText = new TextDecoder().decode(consumed).replace(/[\xff\x00]/g, '').trim();
-                if (comokText.startsWith('comok')) {
-                    workingBaud = tryBaud;
-                    // Drain remaining FF padding bytes.
-                    await new Promise(r => setTimeout(r, 150));
-                    while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
-                        nble.rxBuf = nble.rxBuf.slice(1);
+            // Robust comok capture: drain any leading FF padding (UART noise
+            // or framing residue) before looking for the response terminator.
+            // The real Nextion response always starts with printable ASCII
+            // ("comok ..."); leading FFs are not part of it.
+            let gotComok = false;
+            const deadline = Date.now() + 2000;
+            while (Date.now() < deadline) {
+                while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
+                    nble.rxBuf = nble.rxBuf.slice(1);
+                }
+                const ffIdx = nble.rxBuf.indexOf(0xFF);
+                if (ffIdx >= 0) {
+                    comokBytes = nble.rxBuf.slice(0, ffIdx + 1);
+                    nble.rxBuf = nble.rxBuf.slice(ffIdx + 1);
+                    comokText = new TextDecoder().decode(comokBytes).replace(/[\xff\x00]/g, '').trim();
+                    if (comokText.startsWith('comok')) {
+                        workingBaud = tryBaud;
+                        // Drain remaining FF padding bytes that follow.
+                        await new Promise(r => setTimeout(r, 150));
+                        while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
+                            nble.rxBuf = nble.rxBuf.slice(1);
+                        }
+                        gotComok = true;
+                    } else {
+                        log(`  baud ${tryBaud}: garbled (${comokBytes.length} bytes, not "comok")`, 'NEXTION-BLE');
                     }
                     break;
-                } else {
-                    log(`  baud ${tryBaud}: garbled (${comokBytes.length} bytes, not "comok")`, 'NEXTION-BLE');
                 }
-            } catch {
-                log(`  baud ${tryBaud}: no response`, 'NEXTION-BLE');
+                try { await nbleWaitForData(Math.max(50, deadline - Date.now())); } catch { break; }
             }
+            if (gotComok) break;
+            if (!gotComok) log(`  baud ${tryBaud}: no response`, 'NEXTION-BLE');
         }
         if (!workingBaud) throw new Error('Nextion silent at all tried baud rates');
         log(`Nextion at ${workingBaud}: ${comokText}`, 'NEXTION-BLE');
