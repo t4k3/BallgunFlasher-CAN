@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.4.2</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.4.3</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -178,7 +178,6 @@
                 <div class="status-dot" id="nextionStatusDot"></div>
                 <span id="nextionStatusText">Disconnected</span>
             </div>
-            <button class="btn-connect" id="nextionConnectBtn">Connect</button>
             <div class="model-picker">
                 <label class="active">
                     <input type="radio" name="nextionModel" value="square" checked>
@@ -191,6 +190,7 @@
                     <span class="spec">NX4848E028 · 2.8" round</span>
                 </label>
             </div>
+            <button class="btn-connect" id="nextionConnectBtn">Connect</button>
             <button class="btn-update nextion" id="nextionUpdateBtn" disabled>Flash Nextion .tft</button>
             <label class="file-pick" for="nextionFile" id="nextionFileLabel">…or pick custom .tft</label>
             <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
@@ -260,7 +260,6 @@
                 <div class="status-dot" id="nbleStatusDot"></div>
                 <span id="nbleStatusText">Disconnected</span>
             </div>
-            <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
             <div class="model-picker">
                 <label class="active" id="nbleSquareLabel">
                     <input type="radio" name="nbleModel" value="square" checked>
@@ -273,6 +272,7 @@
                     <span class="spec">NX4848E028 · 2.8" round</span>
                 </label>
             </div>
+            <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
             <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
             <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
             <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
@@ -288,7 +288,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.4.2 · 3-col layout (USB | BLE | Console)</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.4.3 · model picker above buttons</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
     </div>
 </div>
