@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.1.7</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.1.8</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,7 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.7 · whmi-wris flag auto by fwVersion</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.8 · V4 circle .tft (rotation fixed)</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -453,7 +453,7 @@ let nextionPumpRunning = false;
 // buttons above the Flash button (default: square).
 const NEXTION_TFTS = {
     square: { path: 'NEXTION/canbusV20.tft',    name: 'canbusV20.tft',    model: 'NX4827P043 · 4.3" square' },
-    circle: { path: 'NEXTION/canBusRoundedV3.tft', name: 'canBusRoundedV3.tft', model: 'NX4848E028 · 2.8" round' },
+    circle: { path: 'NEXTION/canBusRoundedV4.tft', name: 'canBusRoundedV4.tft', model: 'NX4848E028 · 2.8" round' },
 };
 function nextionSelectedModel() {
     const sel = document.querySelector('input[name="nextionModel"]:checked');
