@@ -3,95 +3,123 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.6</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.4.0</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
-    h1 { text-align: center; color: #ffb74d; margin: 0 0 5px 0; }
-    .subtitle { text-align: center; color: #888; margin-bottom: 15px; font-size: 14px; }
+    body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
+
+    .header-row { display: flex; align-items: center; gap: 12px; max-width: 1500px; margin: 0 auto 8px; }
+    h1 { color: #ffb74d; margin: 0; font-size: 1.25em; flex-shrink: 0; }
+    .subtitle { color: #888; font-size: 11px; flex: 1; }
     .prod-banner {
-        max-width: 1100px;
-        margin: 0 auto 20px;
-        padding: 15px 20px;
-        background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 14px, #ffb300 14px, #ffb300 28px);
-        border-radius: 10px;
-        box-shadow: 0 0 0 2px #ffb300 inset;
+        background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 8px, #ffb300 8px, #ffb300 16px);
+        padding: 2px; border-radius: 4px;
     }
     .prod-banner-inner {
-        background: #1a1a2e;
-        padding: 12px 16px;
-        border-radius: 6px;
-        font-weight: 700;
-        text-align: center;
-        letter-spacing: 0.5px;
+        background: #1a1a2e; padding: 4px 10px; border-radius: 3px;
+        font-weight: 700; font-size: 11px; color: #ffb300; letter-spacing: 0.3px;
     }
-    .prod-banner-inner .big { color: #ffb300; font-size: 1.05em; }
-    .prod-banner-inner .small { color: #ccc; font-size: 0.85em; font-weight: 400; margin-top: 4px; }
-    .main-container { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
-    .device-panels { display: flex; gap: 15px; flex-wrap: wrap; }
-    .device-panel { flex: 1 1 320px; background: #252540; border-radius: 12px; padding: 20px; }
-    .device-panel h2 { margin: 0 0 15px 0; font-size: 1.1em; display: flex; align-items: center; gap: 10px; }
+    .prod-banner-inner .small { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; }
+
+    .main-container { max-width: 1500px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+    .device-panels {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+    .device-panel { background: #252540; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; }
+    .device-panel h2 {
+        margin: 0 0 6px 0; font-size: 0.95em; display: flex; align-items: center; gap: 6px;
+        line-height: 1.2;
+    }
+    .device-panel h2 .sub { font-size: 0.7em; opacity: 0.6; font-weight: 400; }
     .device-panel.standalone h2 { color: #ffb74d; }
     .device-panel.nextion   h2 { color: #ff9800; }
     .device-panel.pinscan   h2 { color: #81d4fa; }
     .device-panel.ftd30     h2 { color: #66bb6a; }
-    .device-panel svg { width: 22px; height: 22px; }
+    .device-panel.ota       h2 { color: #ce93d8; }
+    .device-panel svg { width: 16px; height: 16px; }
 
-    .status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 12px; background: #1a1a2e; border-radius: 6px; font-size: 13px; }
-    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff5252; }
+    .status {
+        display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+        padding: 4px 8px; background: #1a1a2e; border-radius: 4px; font-size: 11px;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff5252; flex-shrink: 0; }
     .status-dot.connected { background: #00c853; }
 
     button {
-        width: 100%; padding: 12px; font-size: 14px; font-weight: 600;
-        border: none; border-radius: 8px; cursor: pointer; margin-bottom: 8px; transition: all 0.2s;
+        width: 100%; padding: 7px; font-size: 12px; font-weight: 600;
+        border: none; border-radius: 5px; cursor: pointer; margin-bottom: 4px;
+        transition: opacity 0.15s, transform 0.15s;
     }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-connect { background: #444; color: white; }
-    .btn-connect:hover:not(:disabled) { background: #555; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-connect { background: #3a3a55; color: white; }
+    .btn-connect:hover:not(:disabled) { background: #46466a; }
     .btn-connect.connected { background: #00c853; }
-    .btn-update { color: #1a1a2e; font-size: 16px; padding: 15px; }
-    .btn-update.standalone { background: linear-gradient(135deg, #ffb74d, #ff9800); }
-    .btn-update.nextion    { background: linear-gradient(135deg, #ff9800, #f57c00); color: white; }
-    .btn-update.pinscan    { background: linear-gradient(135deg, #81d4fa, #29b6f6); }
+    .btn-update { color: #1a1a2e; font-size: 13px; padding: 9px; font-weight: 700; }
+    .btn-update.standalone   { background: linear-gradient(135deg, #ffb74d, #ff9800); }
+    .btn-update.nextion      { background: linear-gradient(135deg, #ff9800, #f57c00); color: white; }
+    .btn-update.pinscan      { background: linear-gradient(135deg, #81d4fa, #29b6f6); }
     .btn-update.ftd30-master { background: linear-gradient(135deg, #66bb6a, #2e7d32); color: white; }
     .btn-update.ftd30-slave  { background: linear-gradient(135deg, #4dd0e1, #00838f); color: white; }
-    .btn-update:hover:not(:disabled) { opacity: 0.92; transform: scale(1.01); }
+    .btn-update.ota          { background: linear-gradient(135deg, #ab47bc, #7b1fa2); color: white; }
+    .btn-update:hover:not(:disabled) { opacity: 0.92; transform: scale(1.005); }
 
-    .progress { width: 100%; height: 6px; background: #1a1a2e; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; }
+    .progress { width: 100%; height: 4px; background: #1a1a2e; border-radius: 2px; overflow: hidden; margin-top: 4px; display: none; }
     .progress-bar { height: 100%; width: 0%; transition: width 0.3s; }
     .progress-bar.standalone { background: linear-gradient(90deg, #ffb74d, #ffd180); }
     .progress-bar.nextion    { background: linear-gradient(90deg, #ff9800, #ffcc80); }
     .progress-bar.pinscan    { background: linear-gradient(90deg, #81d4fa, #b3e5fc); }
     .progress-bar.ota        { background: linear-gradient(90deg, #ab47bc, #ce93d8); }
-    .device-panel.ota h2 { color: #ce93d8; }
-    .btn-update.ota { background: linear-gradient(135deg, #ab47bc, #7b1fa2); color: white; }
 
-    .chip-info { font-size: 11px; color: #666; margin-top: 8px; }
-    .mac-readout { font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; color: #eee; margin-top: 6px; word-break: break-all; }
-
-    .console-section { background: #252540; border-radius: 12px; padding: 20px; }
-    .console-section h2 { margin: 0 0 10px 0; color: #888; font-size: 1em; }
-    #console {
-        background: #0d0d1a; border-radius: 8px; padding: 15px; min-height: 260px; max-height: 400px;
-        overflow-y: scroll; font-family: 'Monaco', 'Menlo', monospace; font-size: 11px;
-        line-height: 1.4; white-space: pre-wrap; word-break: break-all;
+    /* Compact radio model picker */
+    .model-picker { display: flex; gap: 4px; margin: 4px 0; }
+    .model-picker label {
+        flex: 1; cursor: pointer; padding: 4px 6px;
+        background: #1a1a2e; border: 1.5px solid #444; border-radius: 5px;
+        text-align: center; font-size: 11px; line-height: 1.2;
     }
-    .warning { background: #ff6b3520; border: 1px solid #ff6b35; border-radius: 8px; padding: 15px; margin-bottom: 20px; text-align: center; max-width: 800px; margin-left: auto; margin-right: auto; }
+    .model-picker label.active { border-color: #ff9800; }
+    .model-picker input { margin-right: 4px; vertical-align: middle; }
+    .model-picker .name { font-weight: 700; }
+    .model-picker .spec { font-size: 9px; color: #888; display: block; }
 
-    @media (max-width: 900px) {
-        .device-panels { flex-direction: column; }
+    .file-pick { font-size: 10px; color: #999; cursor: pointer; text-decoration: underline; margin-top: 4px; display: inline-block; }
+    .chip-info { font-size: 10px; color: #777; margin-top: 4px; line-height: 1.3; }
+    .mac-readout { font-family: 'Monaco', 'Menlo', monospace; font-size: 10px; color: #ccc; margin-top: 3px; word-break: break-all; }
+
+    .console-section { background: #252540; border-radius: 8px; padding: 8px 12px; }
+    .console-section h2 { margin: 0 0 4px 0; color: #888; font-size: 0.85em; font-weight: 600; }
+    #console {
+        background: #0d0d1a; border-radius: 5px; padding: 8px 10px;
+        height: 160px; overflow-y: scroll;
+        font-family: 'Monaco', 'Menlo', monospace; font-size: 10px;
+        line-height: 1.35; white-space: pre-wrap; word-break: break-all;
+    }
+
+    .footer-row {
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 10px; color: #666; padding: 0 4px; max-width: 1500px; margin: 0 auto;
+    }
+    .footer-row code { color: #888; font-size: 10px; }
+
+    .warning { background: #ff6b3520; border: 1px solid #ff6b35; border-radius: 6px; padding: 8px; margin-bottom: 8px; text-align: center; font-size: 12px; }
+
+    @media (max-width: 1100px) {
+        .device-panels { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 700px) {
+        .device-panels { grid-template-columns: 1fr; }
     }
 </style>
 </head>
 <body>
 
-<h1>Ballgun CAN Flasher</h1>
-<div class="subtitle">Internal production tool — ESP32-C6 + CANopen CiA 402 FTD30 stack</div>
-
-<div class="prod-banner">
-    <div class="prod-banner-inner">
-        <div class="big">⚠ PRODUCTION TOOL — NOT FOR CUSTOMERS ⚠</div>
-        <div class="small">Do not share this URL. Customers use https://t4k3.github.io/BallgunFlasher/</div>
+<div class="header-row">
+    <h1>Ballgun CAN Flasher</h1>
+    <span class="subtitle">ESP32-C6 + CANopen CiA 402 FTD30</span>
+    <div class="prod-banner">
+        <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
     </div>
 </div>
 
@@ -106,177 +134,137 @@
         <div class="device-panel standalone">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="4" width="20" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/></svg>
-                STANDALONE CAN <span id="standaloneVersion" style="font-size:0.65em; opacity:0.7;">(loading…)</span>
+                STANDALONE <span class="sub">USB · <span id="standaloneVersion">…</span></span>
             </h2>
             <div class="status">
                 <div class="status-dot" id="standaloneStatusDot"></div>
                 <span id="standaloneStatusText">Disconnected</span>
             </div>
-            <button class="btn-connect" id="standaloneConnectBtn">Connect STANDALONE</button>
-            <button class="btn-update standalone" id="standaloneUpdateBtn" disabled>Flash STANDALONE CAN</button>
-            <div style="margin-top:6px;">
-                <label id="standaloneFileLabel" for="standaloneFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
-                    …or pick a custom .bin
-                </label>
-                <input type="file" id="standaloneFile" accept=".bin" style="display:none;" />
-            </div>
+            <button class="btn-connect" id="standaloneConnectBtn">Connect</button>
+            <button class="btn-update standalone" id="standaloneUpdateBtn" disabled>Flash STANDALONE</button>
+            <label class="file-pick" for="standaloneFile" id="standaloneFileLabel">…or pick custom .bin</label>
+            <input type="file" id="standaloneFile" accept=".bin" style="display:none;" />
             <div class="progress" id="standaloneProgress"><div class="progress-bar standalone" id="standaloneProgressBar"></div></div>
             <div class="chip-info" id="standaloneChipInfo"></div>
             <div class="mac-readout" id="standaloneMac"></div>
         </div>
 
-        <!-- OTA via Bluetooth (wireless) -->
+        <!-- OTA via Bluetooth -->
         <div class="device-panel ota">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-                OTA BLUETOOTH <span id="otaVersion" style="font-size:0.65em; opacity:0.7;">(loading…)</span>
+                OTA <span class="sub">Bluetooth · <span id="otaVersion">…</span></span>
             </h2>
             <div class="status">
                 <div class="status-dot" id="otaStatusDot"></div>
                 <span id="otaStatusText">Disconnected</span>
             </div>
-            <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update (OTA)</button>
-            <div style="margin-top:6px;">
-                <label id="otaFileLabel" for="otaFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
-                    …or pick a custom .bin
-                </label>
-                <input type="file" id="otaFile" accept=".bin" style="display:none;" />
-            </div>
+            <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
+            <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
+            <input type="file" id="otaFile" accept=".bin" style="display:none;" />
             <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
-            <div class="chip-info" id="otaInfo">
-                Wireless firmware update over BLE — no cable. Chrome/Edge desktop or Chrome Android only
-                (Web Bluetooth is not available on iOS).
-            </div>
+            <div class="chip-info" id="otaInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
 
-        <!-- NEXTION via Bluetooth (wireless .tft update) -->
-        <div class="device-panel nextion">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="8" r="2" fill="currentColor"/></svg>
-                NEXTION BLE <span style="font-size:0.65em; opacity:0.7;">via Bluetooth (wireless)</span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="nbleStatusDot"></div>
-                <span id="nbleStatusText">Disconnected</span>
-            </div>
-            <button class="btn-update" id="nbleConnectBtn" style="background:#ff9800;">Connect &amp; Update Nextion (BLE)</button>
-            <!-- Model picker (sync'd with USB-Nextion panel below) -->
-            <div style="margin:8px 0 4px; display:flex; gap:8px;">
-                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #ff9800; border-radius:8px; text-align:center; font-size:13px;" id="nbleSquareLabel">
-                    <input type="radio" name="nbleModel" value="square" checked style="margin-right:6px;">
-                    <strong>Square</strong><br>
-                    <span style="font-size:10px; color:#888;">NX4827P043 · 4.3"</span>
-                </label>
-                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #444; border-radius:8px; text-align:center; font-size:13px;" id="nbleCircleLabel">
-                    <input type="radio" name="nbleModel" value="circle" style="margin-right:6px;">
-                    <strong>Circle</strong><br>
-                    <span style="font-size:10px; color:#888;">NX4848E028 · 2.8" round</span>
-                </label>
-            </div>
-            <div style="margin-top:6px;">
-                <label id="nbleFileLabel" for="nbleFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
-                    …or pick a custom .tft
-                </label>
-                <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
-            </div>
-            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
-            <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
-            <div class="chip-info" id="nbleInfo">
-                Wireless .tft update over BLE — no cable. Chrome/Edge desktop or Chrome Android only
-                (Web Bluetooth is not available on iOS).
-            </div>
-        </div>
-
-        <!-- NEXTION via USB-Serial-JTAG (production tool) -->
-        <div class="device-panel nextion">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/></svg>
-                NEXTION <span style="font-size:0.65em; opacity:0.7;">via STANDALONE USB</span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="nextionStatusDot"></div>
-                <span id="nextionStatusText">Disconnected</span>
-            </div>
-            <button class="btn-connect" id="nextionConnectBtn">Connect NEXTION</button>
-
-            <!-- Display model picker -->
-            <div style="margin:8px 0 10px; display:flex; gap:8px;">
-                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #ff9800; border-radius:8px; text-align:center; font-size:13px;">
-                    <input type="radio" name="nextionModel" value="square" checked style="margin-right:6px;">
-                    <strong>Square</strong><br>
-                    <span style="font-size:10px; color:#888;">NX4827P043 · 4.3"</span>
-                </label>
-                <label style="flex:1; cursor:pointer; padding:8px; background:#1a1a2e; border:2px solid #444; border-radius:8px; text-align:center; font-size:13px;">
-                    <input type="radio" name="nextionModel" value="circle" style="margin-right:6px;">
-                    <strong>Circle</strong><br>
-                    <span style="font-size:10px; color:#888;">NX4848E028 · 2.8" round</span>
-                </label>
-            </div>
-
-            <button class="btn-update nextion" id="nextionUpdateBtn" disabled>Flash Nextion TFT</button>
-            <div style="margin-top:6px;">
-                <label id="nextionFileLabel" for="nextionFile" style="font-size:12px; color:#bbb; cursor:pointer; text-decoration:underline;">
-                    …or pick a custom .tft
-                </label>
-                <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
-            </div>
-            <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
-            <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
-            <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.6 · force USB hard reset post-flash</code></div>
-        </div>
-
-        <!-- PINSCAN diagnostic -->
-        <!-- PINSCAN diagnostic panel kept in source but hidden from the UI;
-             remove the inline display:none below if you need it again. -->
-        <div class="device-panel pinscan" style="display:none;">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v4 M12 18v4 M2 12h4 M18 12h4" stroke="currentColor" stroke-width="2"/></svg>
-                PINSCAN <span style="font-size:0.65em; opacity:0.7;">diagnostic</span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="pinscanStatusDot"></div>
-                <span id="pinscanStatusText">Disconnected</span>
-            </div>
-            <button class="btn-connect" id="pinscanConnectBtn">Connect ESP32</button>
-            <button class="btn-update pinscan" id="pinscanUpdateBtn" disabled>Flash PINSCAN fw</button>
-            <div class="chip-info">Flashes ballgun_pinscan. Open <code>idf.py monitor</code> at 115200 after flash to read GPIO scan results.</div>
-            <div class="progress" id="pinscanProgress"><div class="progress-bar pinscan" id="pinscanProgressBar"></div></div>
-            <div class="mac-readout" id="pinscanMac"></div>
-        </div>
-
-        <!-- FTD30 PRODUCTION SETUP (direct USB-FTDI Modbus) -->
+        <!-- FTD30 SETUP -->
         <div class="device-panel ftd30">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12h4 M17 12h4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v6 M9 12h6" stroke="currentColor" stroke-width="2"/></svg>
-                FTD30 SETUP <span style="font-size:0.65em; opacity:0.7;">factory production · USB-FTDI Modbus</span>
+                FTD30 SETUP <span class="sub">FTDI Modbus</span>
             </h2>
             <div class="status">
                 <div class="status-dot" id="ftd30StatusDot"></div>
                 <span id="ftd30StatusText">Disconnected</span>
             </div>
             <button class="btn-connect" id="ftd30ConnectBtn">Connect FTDI</button>
+            <div style="margin: 4px 0; display:flex; gap:6px; align-items:center; font-size:11px;">
+                <label>Current ID <input type="number" id="ftd30CurrentId" value="1" min="1" max="247" style="width:50px; padding:2px 4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:3px; margin-left:4px; font-size:11px;"></label>
+            </div>
+            <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash MASTER (id=1)</button>
+            <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash SLAVE (id=2)</button>
+            <div class="chip-info">One FTD30 at a time · 38400 8E1 · unlock→CAN→APP→node→save</div>
+        </div>
 
-            <div style="margin:8px 0; display:flex; gap:8px; align-items:center; font-size:13px;">
-                <label style="flex:1;">Current node ID
-                    <input type="number" id="ftd30CurrentId" value="1" min="1" max="247"
-                           style="width:60px; padding:4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:4px; margin-left:6px;">
+        <!-- NEXTION BLE -->
+        <div class="device-panel nextion">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="8" r="2" fill="currentColor"/></svg>
+                NEXTION BLE <span class="sub">wireless .tft</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="nbleStatusDot"></div>
+                <span id="nbleStatusText">Disconnected</span>
+            </div>
+            <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
+            <div class="model-picker">
+                <label class="active" id="nbleSquareLabel">
+                    <input type="radio" name="nbleModel" value="square" checked>
+                    <span class="name">Square</span>
+                    <span class="spec">NX4827P043 · 4.3"</span>
+                </label>
+                <label id="nbleCircleLabel">
+                    <input type="radio" name="nbleModel" value="circle">
+                    <span class="name">Circle</span>
+                    <span class="spec">NX4848E028 · 2.8" round</span>
                 </label>
             </div>
+            <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
+            <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
+            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
+            <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
+        </div>
 
-            <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash FTD30 as MASTER (id=1)</button>
-            <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash FTD30 as SLAVE (id=2)</button>
-
-            <div class="chip-info" style="margin-top:8px;">
-                Connect <strong>one FTD30 at a time</strong> via FTDI USB-RS485 cable (38400 8E1).<br>
-                Sequence sent: unlock <code>0x103F=11</code> → set <code>0x000A=8</code> (CAN bus mode) → set <code>0x0015=0</code> (APP=0) → set <code>0x0001</code> = node ID → save <code>0x1000=0x0100</code>.
+        <!-- NEXTION USB (via STANDALONE bridge) -->
+        <div class="device-panel nextion">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/></svg>
+                NEXTION USB <span class="sub">via STANDALONE bridge</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="nextionStatusDot"></div>
+                <span id="nextionStatusText">Disconnected</span>
             </div>
+            <button class="btn-connect" id="nextionConnectBtn">Connect</button>
+            <div class="model-picker">
+                <label class="active">
+                    <input type="radio" name="nextionModel" value="square" checked>
+                    <span class="name">Square</span>
+                    <span class="spec">NX4827P043 · 4.3"</span>
+                </label>
+                <label>
+                    <input type="radio" name="nextionModel" value="circle">
+                    <span class="name">Circle</span>
+                    <span class="spec">NX4848E028 · 2.8" round</span>
+                </label>
+            </div>
+            <button class="btn-update nextion" id="nextionUpdateBtn" disabled>Flash Nextion .tft</button>
+            <label class="file-pick" for="nextionFile" id="nextionFileLabel">…or pick custom .tft</label>
+            <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
+            <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
+            <div class="chip-info" id="nextionInfo"></div>
+        </div>
+
+        <!-- PINSCAN (hidden) -->
+        <div class="device-panel pinscan" style="display:none;">
+            <h2><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v4 M12 18v4 M2 12h4 M18 12h4" stroke="currentColor" stroke-width="2"/></svg> PINSCAN <span class="sub">diagnostic</span></h2>
+            <div class="status"><div class="status-dot" id="pinscanStatusDot"></div><span id="pinscanStatusText">Disconnected</span></div>
+            <button class="btn-connect" id="pinscanConnectBtn">Connect ESP32</button>
+            <button class="btn-update pinscan" id="pinscanUpdateBtn" disabled>Flash PINSCAN</button>
+            <div class="progress" id="pinscanProgress"><div class="progress-bar pinscan" id="pinscanProgressBar"></div></div>
+            <div class="mac-readout" id="pinscanMac"></div>
         </div>
     </div>
 
     <div class="console-section">
         <h2>Console</h2>
         <div id="console"></div>
+    </div>
+
+    <div class="footer-row">
+        <span>Flasher build: <code id="flasherBuild">flasher-1.4.0 · compact UI</code></span>
+        <span>STANDALONE bin <code id="footerVersion">…</code></span>
     </div>
 </div>
 
