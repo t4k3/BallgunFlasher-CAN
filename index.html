@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.4.0</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.4.2</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -22,11 +22,24 @@
     .prod-banner-inner .small { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; }
 
     .main-container { max-width: 1500px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
-    .device-panels {
+
+    /* New layout: 3 columns side-by-side.
+       Col 1 = USB-cable panels (stacked).
+       Col 2 = BLE panels (stacked).
+       Col 3 = Console (full vertical). */
+    .workspace {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) minmax(360px, 1.4fr);
         gap: 8px;
+        align-items: start;
     }
+    .panel-col { display: flex; flex-direction: column; gap: 8px; }
+    .col-title {
+        font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px;
+        padding: 0 4px;
+    }
+    .col-title.usb { color: #ffb74d; }
+    .col-title.ble { color: #ce93d8; }
     .device-panel { background: #252540; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; }
     .device-panel h2 {
         margin: 0 0 6px 0; font-size: 0.95em; display: flex; align-items: center; gap: 6px;
@@ -88,11 +101,11 @@
     .chip-info { font-size: 10px; color: #777; margin-top: 4px; line-height: 1.3; }
     .mac-readout { font-family: 'Monaco', 'Menlo', monospace; font-size: 10px; color: #ccc; margin-top: 3px; word-break: break-all; }
 
-    .console-section { background: #252540; border-radius: 8px; padding: 8px 12px; }
+    .console-section { background: #252540; border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; }
     .console-section h2 { margin: 0 0 4px 0; color: #888; font-size: 0.85em; font-weight: 600; }
     #console {
         background: #0d0d1a; border-radius: 5px; padding: 8px 10px;
-        height: 160px; overflow-y: scroll;
+        flex: 1; min-height: 320px; max-height: 560px; overflow-y: scroll;
         font-family: 'Monaco', 'Menlo', monospace; font-size: 10px;
         line-height: 1.35; white-space: pre-wrap; word-break: break-all;
     }
@@ -106,10 +119,11 @@
     .warning { background: #ff6b3520; border: 1px solid #ff6b35; border-radius: 6px; padding: 8px; margin-bottom: 8px; text-align: center; font-size: 12px; }
 
     @media (max-width: 1100px) {
-        .device-panels { grid-template-columns: repeat(2, 1fr); }
+        .workspace { grid-template-columns: 1fr 1fr; }
+        .console-section { grid-column: 1 / -1; }
     }
     @media (max-width: 700px) {
-        .device-panels { grid-template-columns: 1fr; }
+        .workspace { grid-template-columns: 1fr; }
     }
 </style>
 </head>
@@ -129,7 +143,12 @@
 
 <div class="main-container">
 
-    <div class="device-panels">
+    <div class="workspace">
+
+    <!-- COLUMN 1: USB · CABLE -->
+    <div class="panel-col">
+        <div class="col-title usb">USB · CABLE</div>
+
         <!-- STANDALONE CAN -->
         <div class="device-panel standalone">
             <h2>
@@ -147,72 +166,6 @@
             <div class="progress" id="standaloneProgress"><div class="progress-bar standalone" id="standaloneProgressBar"></div></div>
             <div class="chip-info" id="standaloneChipInfo"></div>
             <div class="mac-readout" id="standaloneMac"></div>
-        </div>
-
-        <!-- OTA via Bluetooth -->
-        <div class="device-panel ota">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-                OTA <span class="sub">Bluetooth · <span id="otaVersion">…</span></span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="otaStatusDot"></div>
-                <span id="otaStatusText">Disconnected</span>
-            </div>
-            <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
-            <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
-            <input type="file" id="otaFile" accept=".bin" style="display:none;" />
-            <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
-            <div class="chip-info" id="otaInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
-        </div>
-
-        <!-- FTD30 SETUP — hidden until the FTDI Modbus flow is finalized -->
-        <div class="device-panel ftd30" style="display:none;">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12h4 M17 12h4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v6 M9 12h6" stroke="currentColor" stroke-width="2"/></svg>
-                FTD30 SETUP <span class="sub">FTDI Modbus</span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="ftd30StatusDot"></div>
-                <span id="ftd30StatusText">Disconnected</span>
-            </div>
-            <button class="btn-connect" id="ftd30ConnectBtn">Connect FTDI</button>
-            <div style="margin: 4px 0; display:flex; gap:6px; align-items:center; font-size:11px;">
-                <label>Current ID <input type="number" id="ftd30CurrentId" value="1" min="1" max="247" style="width:50px; padding:2px 4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:3px; margin-left:4px; font-size:11px;"></label>
-            </div>
-            <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash MASTER (id=1)</button>
-            <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash SLAVE (id=2)</button>
-            <div class="chip-info">One FTD30 at a time · 38400 8E1 · unlock→CAN→APP→node→save</div>
-        </div>
-
-        <!-- NEXTION BLE -->
-        <div class="device-panel nextion">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="8" r="2" fill="currentColor"/></svg>
-                NEXTION BLE <span class="sub">wireless .tft</span>
-            </h2>
-            <div class="status">
-                <div class="status-dot" id="nbleStatusDot"></div>
-                <span id="nbleStatusText">Disconnected</span>
-            </div>
-            <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
-            <div class="model-picker">
-                <label class="active" id="nbleSquareLabel">
-                    <input type="radio" name="nbleModel" value="square" checked>
-                    <span class="name">Square</span>
-                    <span class="spec">NX4827P043 · 4.3"</span>
-                </label>
-                <label id="nbleCircleLabel">
-                    <input type="radio" name="nbleModel" value="circle">
-                    <span class="name">Circle</span>
-                    <span class="spec">NX4848E028 · 2.8" round</span>
-                </label>
-            </div>
-            <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
-            <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
-            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
-            <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
-            <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
 
         <!-- NEXTION USB (via STANDALONE bridge) -->
@@ -246,7 +199,26 @@
             <div class="chip-info" id="nextionInfo"></div>
         </div>
 
-        <!-- PINSCAN (hidden) -->
+        <!-- HIDDEN: FTD30 SETUP (FTDI Modbus, not finalized) -->
+        <div class="device-panel ftd30" style="display:none;">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 12h4 M17 12h4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v6 M9 12h6" stroke="currentColor" stroke-width="2"/></svg>
+                FTD30 SETUP <span class="sub">FTDI Modbus</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="ftd30StatusDot"></div>
+                <span id="ftd30StatusText">Disconnected</span>
+            </div>
+            <button class="btn-connect" id="ftd30ConnectBtn">Connect FTDI</button>
+            <div style="margin: 4px 0; display:flex; gap:6px; align-items:center; font-size:11px;">
+                <label>Current ID <input type="number" id="ftd30CurrentId" value="1" min="1" max="247" style="width:50px; padding:2px 4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:3px; margin-left:4px; font-size:11px;"></label>
+            </div>
+            <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash MASTER (id=1)</button>
+            <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash SLAVE (id=2)</button>
+            <div class="chip-info">One FTD30 at a time · 38400 8E1</div>
+        </div>
+
+        <!-- HIDDEN: PINSCAN diagnostic -->
         <div class="device-panel pinscan" style="display:none;">
             <h2><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v4 M12 18v4 M2 12h4 M18 12h4" stroke="currentColor" stroke-width="2"/></svg> PINSCAN <span class="sub">diagnostic</span></h2>
             <div class="status"><div class="status-dot" id="pinscanStatusDot"></div><span id="pinscanStatusText">Disconnected</span></div>
@@ -257,13 +229,66 @@
         </div>
     </div>
 
+    <!-- COLUMN 2: BLE · WIRELESS -->
+    <div class="panel-col">
+        <div class="col-title ble">BLE · WIRELESS</div>
+
+        <!-- OTA via Bluetooth -->
+        <div class="device-panel ota">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 7l10 10-5 5V2l5 5L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+                OTA <span class="sub">Bluetooth · <span id="otaVersion">…</span></span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="otaStatusDot"></div>
+                <span id="otaStatusText">Disconnected</span>
+            </div>
+            <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
+            <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
+            <input type="file" id="otaFile" accept=".bin" style="display:none;" />
+            <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
+            <div class="chip-info" id="otaInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
+        </div>
+
+        <!-- NEXTION BLE -->
+        <div class="device-panel nextion">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8 M12 17v4" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="8" r="2" fill="currentColor"/></svg>
+                NEXTION BLE <span class="sub">wireless .tft</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="nbleStatusDot"></div>
+                <span id="nbleStatusText">Disconnected</span>
+            </div>
+            <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
+            <div class="model-picker">
+                <label class="active" id="nbleSquareLabel">
+                    <input type="radio" name="nbleModel" value="square" checked>
+                    <span class="name">Square</span>
+                    <span class="spec">NX4827P043 · 4.3"</span>
+                </label>
+                <label id="nbleCircleLabel">
+                    <input type="radio" name="nbleModel" value="circle">
+                    <span class="name">Circle</span>
+                    <span class="spec">NX4848E028 · 2.8" round</span>
+                </label>
+            </div>
+            <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
+            <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
+            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
+            <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
+        </div>
+    </div>
+
+    <!-- COLUMN 3: CONSOLE (full vertical) -->
     <div class="console-section">
         <h2>Console</h2>
         <div id="console"></div>
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.4.0 · compact UI</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.4.2 · 3-col layout (USB | BLE | Console)</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
     </div>
 </div>
