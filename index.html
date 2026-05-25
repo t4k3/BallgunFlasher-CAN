@@ -194,7 +194,7 @@
             <button class="btn-update nextion" id="nextionUpdateBtn" disabled>Flash Nextion .tft</button>
             <label class="file-pick" for="nextionFile" id="nextionFileLabel">…or pick custom .tft</label>
             <input type="file" id="nextionFile" accept=".tft" style="display:none;" />
-            <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquare.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
         </div>
@@ -275,7 +275,7 @@
             <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
             <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
             <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
-            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
+            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquare.tft</code></div>
             <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
             <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
@@ -524,8 +524,8 @@ let nextionPumpRunning = false;
 // Display model -> TFT file mapping. Operator picks via the radio
 // buttons above the Flash button (default: square).
 const NEXTION_TFTS = {
-    square: { path: 'NEXTION/canBusSquareV5.tft', name: 'canBusSquareV5.tft', model: 'NX4827P043 · 4.3" square' },
-    circle: { path: 'NEXTION/canBusRoundedV5.tft', name: 'canBusRoundedV5.tft', model: 'NX4848E028 · 2.8" round' },
+    square: { path: 'NEXTION/canBusSquare.tft',  name: 'canBusSquare.tft',  model: 'NX4827P043 · 4.3" square' },
+    circle: { path: 'NEXTION/canBusRounded.tft', name: 'canBusRounded.tft', model: 'NX4848E028 · 2.8" round' },
 };
 function nextionSelectedModel() {
     const sel = document.querySelector('input[name="nextionModel"]:checked');
