@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.1.6</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.1.7</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,7 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.6 · circle .tft versioned in filename</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.7 · whmi-wris flag auto by fwVersion</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -697,6 +697,7 @@ async function nextionUpdate(tftData) {
         log('detecting Nextion baud…', 'NEXTION');
         const baudRates = [9600, 115200, 38400, 57600, 4800, 19200];
         let detectedBaud = 0;
+        let detectedFwVersion = null;
         for (const baud of baudRates) {
             log(`  try ${baud}…`, 'NEXTION');
             await nextionDrainRx(100);
@@ -722,6 +723,7 @@ async function nextionUpdate(tftData) {
                 if (modelIdx > 0 && parts.length > modelIdx + 1) {
                     const model = parts[modelIdx].trim();
                     const fwVersion = parseInt(parts[modelIdx + 1], 10);
+                    if (!isNaN(fwVersion)) detectedFwVersion = fwVersion;
                     log(`  Model: ${model}, fwVersion: ${isNaN(fwVersion) ? 'unknown' : fwVersion}`, 'NEXTION');
                 }
                 detectedBaud = baud; break;
@@ -732,9 +734,18 @@ async function nextionUpdate(tftData) {
         nextionSetProgress(15);
         await nextionDrainRx(200);
 
-        // Step 3: whmi-wris (protocol v1.2 for Intelligent series)
+        // Step 3: whmi-wris (protocol v1.2 for Intelligent series).
+        // The trailing flag selects upload mode:
+        //   ,0 = base mode (no skip-frames, simpler final verification)
+        //   ,1 = optimized mode (skip-frames enabled, strict CRC32)
+        // For displays with old bootloader (fwVersion < ~250), ,1 can
+        // trigger a CRC check the bootloader can't compute correctly,
+        // producing "data error" at reboot despite a clean upload.
+        // Use ,0 for fwVersion < 250 and ,1 for newer.
         const fileSize = tftData.size;
-        const uploadCmd = `whmi-wris ${fileSize},${detectedBaud},1`;
+        const uploadFlag = (typeof detectedFwVersion === 'number' && detectedFwVersion < 250) ? 0 : 1;
+        const uploadCmd = `whmi-wris ${fileSize},${detectedBaud},${uploadFlag}`;
+        log(`upload flag: ${uploadFlag} (fwVersion=${detectedFwVersion}, threshold<250 → use ,0 for old bootloaders)`, 'NEXTION');
         log(`upload cmd: ${uploadCmd}`, 'NEXTION');
         await nextionSendCmd(uploadCmd);
 
