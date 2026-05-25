@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.1.1</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.1.2</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,7 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.1 · Nextion frame-trace</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.2 · padding removed (was unrelated)</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -745,28 +745,11 @@ async function nextionUpdate(tftData) {
         nextionSetProgress(20);
 
         // Step 4: stream .tft in 4KB chunks, handle 0x05 (next) and 0x08 (skip offset)
-        // CRITICAL for Intelligent series (NX48xxE/T/K): every chunk MUST be
-        // exactly 4096 bytes. The final partial chunk must be padded with 0x00
-        // up to 4096 — otherwise the bootloader's final CRC32 check fails and
-        // the display reboots with "data error". P-series tolerates short
-        // final chunks; Intelligent does not.
         const fileData = tftData.data;
         const chunkSize = 4096;
         let filePos = 0;
         let chunksSent = 0;
         const uploadStart = Date.now();
-
-        // Build a chunk of exactly chunkSize, padding with 0x00 past EOF.
-        // filePos must be < fileData.length (caller's responsibility).
-        const buildChunk = (pos) => {
-            const end = Math.min(pos + chunkSize, fileData.length);
-            const realLen = end - pos;
-            if (realLen === chunkSize) return fileData.subarray(pos, end);
-            const padded = new Uint8Array(chunkSize);
-            padded.set(fileData.subarray(pos, end), 0);
-            // remaining bytes already 0x00 from new Uint8Array()
-            return padded;
-        };
 
         // Per-frame trace counters for diagnostics
         let frame05Count = 0;
@@ -775,9 +758,9 @@ async function nextionUpdate(tftData) {
 
         // First chunk immediately after initial ACK
         {
-            await nextionWriter.write(buildChunk(filePos));
-            filePos = Math.min(filePos + chunkSize, fileData.length);
-            chunksSent++;
+            const end = Math.min(filePos + chunkSize, fileData.length);
+            await nextionWriter.write(fileData.slice(filePos, end));
+            filePos = end; chunksSent++;
         }
 
         while (filePos < fileSize) {
@@ -789,9 +772,9 @@ async function nextionUpdate(tftData) {
                     if (nextionRxBuffer[0] === 0x05) {
                         nextionRxBuffer = new Uint8Array(0);
                         frame05Count++;
-                        await nextionWriter.write(buildChunk(filePos));
-                        filePos = Math.min(filePos + chunkSize, fileData.length);
-                        chunksSent++; responded = true; break;
+                        const end = Math.min(filePos + chunkSize, fileData.length);
+                        await nextionWriter.write(fileData.slice(filePos, end));
+                        filePos = end; chunksSent++; responded = true; break;
                     } else if (nextionRxBuffer[0] === 0x08 && nextionRxBuffer.length >= 5) {
                         const off = nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
                                     (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24);
@@ -801,9 +784,9 @@ async function nextionUpdate(tftData) {
                         log(`  0x08 skip frame @ chunk ${chunksSent}: off=${off} (0x${off.toString(16)}), filePos was ${filePos}`, 'NEXTION');
                         if (off >= fileSize) { filePos = fileSize; responded = true; break; }
                         filePos = off;
-                        await nextionWriter.write(buildChunk(filePos));
-                        filePos = Math.min(filePos + chunkSize, fileData.length);
-                        chunksSent++; responded = true; break;
+                        const end = Math.min(filePos + chunkSize, fileData.length);
+                        await nextionWriter.write(fileData.slice(filePos, end));
+                        filePos = end; chunksSent++; responded = true; break;
                     } else if (nextionRxBuffer.length >= 1) {
                         // Unexpected byte — log it so we can see what's actually arriving
                         const unknownByte = nextionRxBuffer[0];
