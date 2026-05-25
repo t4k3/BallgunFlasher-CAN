@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.2</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.3</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -223,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.2 · Nextion BLE: audit fixes</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.3 · diag dump on no-comok</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1711,7 +1711,16 @@ async function nbleRunUpdate(tftData) {
                 try { await nbleWaitForData(Math.max(50, deadline - Date.now())); } catch { break; }
             }
             if (gotComok) break;
-            if (!gotComok) log(`  baud ${tryBaud}: no response`, 'NEXTION-BLE');
+            if (!gotComok) {
+                // Dump whatever non-FF data ended up in the buffer for diagnostics.
+                if (nble.rxBuf.length > 0) {
+                    const hex = Array.from(nble.rxBuf.slice(0, 32)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+                    log(`  baud ${tryBaud}: no terminator. rxBuf (${nble.rxBuf.length} B): ${hex}${nble.rxBuf.length>32?' …':''}`, 'NEXTION-BLE');
+                    nble.rxBuf = new Uint8Array(0);
+                } else {
+                    log(`  baud ${tryBaud}: no response (rxBuf empty)`, 'NEXTION-BLE');
+                }
+            }
         }
         if (!workingBaud) throw new Error('Nextion silent at all tried baud rates');
         log(`Nextion at ${workingBaud}: ${comokText}`, 'NEXTION-BLE');
