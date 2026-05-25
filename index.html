@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.1.2</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.1.3</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -185,7 +185,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canbusV20.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.2 · padding removed (was unrelated)</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.1.3 · exact byte count in log</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -649,7 +649,7 @@ async function nextionUpdate(tftData) {
     updateBtn.disabled = true;
 
     log('', 'NEXTION');
-    log(`=== NEXTION UPDATE: ${tftData.name} (${(tftData.size/1024).toFixed(0)} KB) ===`, 'NEXTION');
+    log(`=== NEXTION UPDATE: ${tftData.name} (${tftData.size} B / ${(tftData.size/1024).toFixed(2)} KB) ===`, 'NEXTION');
 
     try {
         nextionSetStatus('Updating…', true);
