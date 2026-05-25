@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.3.0</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.3.1</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 20px; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -223,7 +223,7 @@
             <div class="chip-info" id="nextionDefaultLabel">Default: <code>NEXTION/canBusSquareV5.tft</code></div>
             <div class="progress" id="nextionProgress"><div class="progress-bar nextion" id="nextionProgressBar"></div></div>
             <div class="chip-info" id="nextionInfo"></div>
-            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.0 · Nextion BLE</code></div>
+            <div class="chip-info" style="margin-top:8px; color:#888; font-size:11px;">Flasher build: <code id="flasherBuild">flasher-1.3.1 · Nextion BLE: comok parse fix + baud retry</code></div>
         </div>
 
         <!-- PINSCAN diagnostic -->
@@ -1628,28 +1628,51 @@ async function nbleRunUpdate(tftData) {
         log('passthrough active', 'NEXTION-BLE');
         nbleSetProgress(2);
 
-        // 2) Set UART baud explicitly (FE 07 <baud LE>)
-        const b = NBLE_UART_BAUD;
-        const ack2 = await nbleSendCmd([0xFE, 0x07, b & 0xFF, (b >> 8) & 0xFF, (b >> 16) & 0xFF, (b >> 24) & 0xFF], 3000);
-        if (!(ack2.length >= 3 && ack2[1] === 0x07 && ack2[2] === 0x00))
-            throw new Error('no baud-set ACK');
-        log(`UART baud set to ${b}`, 'NEXTION-BLE');
-
-        // 3) "connect" → expect "comok ..." inside an FE 12 wrapper.
-        nble.rxBuf = new Uint8Array(0);
+        // 2) "connect" + baud detection — expect "comok ..." inside FE 12 wrapper.
+        //    Retry at a few common baud rates: most units are at 115200, but
+        //    a fresh-programmed display defaults to 9600.
         const enc = new TextEncoder();
-        await nbleForwardRaw(enc.encode('connect'));
-        await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
+        const bauds = [115200, 9600, 57600, 38400];
         let comokBytes = new Uint8Array(0);
-        try {
-            // Wait for terminator 0xFF then drain any leading FF padding etc.
-            await nbleWaitForByte(0xFF, 3000);
-        } catch { /* fall through — may already be buffered */ }
-        // Give the display a brief moment to spill the rest.
-        await new Promise(r => setTimeout(r, 200));
-        comokBytes = nble.rxBuf.slice();
-        const comokText = new TextDecoder().decode(comokBytes).replace(/[\xff\x00]/g, '');
-        log(`comok response: ${comokText}`, 'NEXTION-BLE');
+        let comokText = '';
+        let workingBaud = 0;
+        for (const tryBaud of bauds) {
+            // Set the ESP32-side UART to this baud.
+            const a = await nbleSendCmd(
+                [0xFE, 0x07, tryBaud & 0xFF, (tryBaud >> 8) & 0xFF, (tryBaud >> 16) & 0xFF, (tryBaud >> 24) & 0xFF],
+                2000
+            ).catch(() => null);
+            if (!a || a[1] !== 0x07 || a[2] !== 0x00) {
+                log(`  baud ${tryBaud}: bridge did not ACK`, 'NEXTION-BLE');
+                continue;
+            }
+            nble.rxBuf = new Uint8Array(0);
+            await nbleForwardRaw(enc.encode('connect'));
+            await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
+            // Wait up to 2 s for any non-FF byte to arrive.
+            try {
+                const consumed = await nbleWaitForByte(0xFF, 2000);
+                // `consumed` holds everything up to and including the first FF
+                // terminator — i.e. the full "comok 2,..." string.
+                comokBytes = consumed;
+                comokText = new TextDecoder().decode(consumed).replace(/[\xff\x00]/g, '').trim();
+                if (comokText.startsWith('comok')) {
+                    workingBaud = tryBaud;
+                    // Drain remaining FF padding bytes.
+                    await new Promise(r => setTimeout(r, 150));
+                    while (nble.rxBuf.length > 0 && nble.rxBuf[0] === 0xFF) {
+                        nble.rxBuf = nble.rxBuf.slice(1);
+                    }
+                    break;
+                } else {
+                    log(`  baud ${tryBaud}: garbled (${comokBytes.length} bytes, not "comok")`, 'NEXTION-BLE');
+                }
+            } catch {
+                log(`  baud ${tryBaud}: no response`, 'NEXTION-BLE');
+            }
+        }
+        if (!workingBaud) throw new Error('Nextion silent at all tried baud rates');
+        log(`Nextion at ${workingBaud}: ${comokText}`, 'NEXTION-BLE');
         // Parse for fwVersion (selects whmi-wris flag like the USB path).
         let detectedFw = null;
         const parts = comokText.split(',');
@@ -1664,7 +1687,7 @@ async function nbleRunUpdate(tftData) {
 
         // 4) whmi-wris <filesize>,<baud>,<flag>\xFF\xFF\xFF
         const uploadFlag = (typeof detectedFw === 'number' && detectedFw < 250) ? 0 : 1;
-        const uploadCmd = `whmi-wris ${tftData.size},${b},${uploadFlag}`;
+        const uploadCmd = `whmi-wris ${tftData.size},${workingBaud},${uploadFlag}`;
         log(`upload cmd: ${uploadCmd} (fw=${detectedFw} → flag ${uploadFlag})`, 'NEXTION-BLE');
         await nbleForwardRaw(enc.encode(uploadCmd));
         await nbleForwardRaw(new Uint8Array([0xFF, 0xFF, 0xFF]));
