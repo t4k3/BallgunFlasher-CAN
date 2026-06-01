@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.4.5</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.4.6</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -288,7 +288,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.4.5 · live TFT version badge</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.4.6 · fix 0x08 off=0 rewind (data error)</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
     </div>
 </div>
@@ -901,14 +901,21 @@ async function nextionUpdate(tftData) {
                         await nextionWriter.write(fileData.slice(filePos, end));
                         filePos = end; chunksSent++; responded = true; break;
                     } else if (nextionRxBuffer[0] === 0x08 && nextionRxBuffer.length >= 5) {
-                        const off = nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
-                                    (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24);
+                        const off = (nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
+                                    (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24)) >>> 0;
                         nextionRxBuffer = new Uint8Array(0);
                         frame08Count++;
                         if (frame08History.length < 20) frame08History.push({chunk: chunksSent, off});
-                        log(`  0x08 skip frame @ chunk ${chunksSent}: off=${off} (0x${off.toString(16)}), filePos was ${filePos}`, 'NEXTION');
+                        log(`  0x08 frame @ chunk ${chunksSent}: off=${off} (0x${off.toString(16)}), filePos=${filePos}`, 'NEXTION');
+                        // Nextion v1.2 fast-upload semantics (per ESPHome ref impl):
+                        //   off >  0  → seek/resume to that absolute offset
+                        //   off == 0  → "continue forward", DO NOT rewind.
+                        // The old code did `filePos = off` unconditionally, so an
+                        // off==0 frame rewound to the start and re-sent the first
+                        // 4 KB block — desyncing the stream by one chunk and
+                        // producing "data error" at reboot (round NX4848E028).
                         if (off >= fileSize) { filePos = fileSize; responded = true; break; }
-                        filePos = off;
+                        if (off > 0) filePos = off;   // off==0 → keep filePos (sequential)
                         const end = Math.min(filePos + chunkSize, fileData.length);
                         await nextionWriter.write(fileData.slice(filePos, end));
                         filePos = end; chunksSent++; responded = true; break;
@@ -1848,11 +1855,11 @@ async function nbleRunUpdate(tftData) {
                         frame05Count++;
                         break;
                     } else if (nble.rxBuf[0] === 0x08 && nble.rxBuf.length >= 5) {
-                        off = nble.rxBuf[1] | (nble.rxBuf[2] << 8) | (nble.rxBuf[3] << 16) | (nble.rxBuf[4] << 24);
+                        off = (nble.rxBuf[1] | (nble.rxBuf[2] << 8) | (nble.rxBuf[3] << 16) | (nble.rxBuf[4] << 24)) >>> 0;
                         frameByte = 0x08;
                         nble.rxBuf = nble.rxBuf.slice(5);
                         frame08Count++;
-                        log(`  0x08 skip frame @ chunk ${chunksSent}: off=${off}, filePos was ${filePos}`, 'NEXTION-BLE');
+                        log(`  0x08 frame @ chunk ${chunksSent}: off=${off}, filePos=${filePos}`, 'NEXTION-BLE');
                         break;
                     } else if (nble.rxBuf[0] !== 0x05 && nble.rxBuf[0] !== 0x08) {
                         const hex = Array.from(nble.rxBuf.slice(0,8)).map(x=>x.toString(16).padStart(2,'0')).join(' ');
@@ -1865,8 +1872,10 @@ async function nbleRunUpdate(tftData) {
             if (frameByte < 0) throw new Error(`no display ACK after chunk ${chunksSent} (filePos=${filePos})`);
 
             if (frameByte === 0x08) {
+                // v1.2: off>0 → seek to offset; off==0 → continue forward
+                // (do NOT rewind, see USB path comment).
                 if (off >= fileSize) { filePos = fileSize; break; }
-                filePos = off;
+                if (off > 0) filePos = off;
             }
             const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
             await nbleForwardRaw(data.slice(filePos, end));
