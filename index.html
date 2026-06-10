@@ -1379,6 +1379,10 @@ async function otaRunUpdate(binData) {
         let p = otaWaitNotify(3000);
         await otaWrite([0xFE, 0x05], true);
         let r = await p;
+        // V20.6.0+: firmware rejects OTA while motors are enabled or still
+        // spinning, replying FE E0 09 (BLE_ERR_MOTORS_RUNNING) instead of FE 05 00.
+        if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)
+            throw new Error('Motors running — stop the motors before updating');
         if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0x05)) throw new Error('no OTA-mode ack');
         log('device in OTA mode', 'OTA');
 
