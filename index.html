@@ -1418,7 +1418,16 @@ async function otaRunUpdate(binData) {
             for (let attempt = 0; attempt < OTA_MAX_RETRIES && !ok; attempt++) {
                 const ackP = otaWaitNotify(OTA_ACK_TIMEOUT);   // arm before streaming
                 try {
-                    for (const pkt of pkts) await otaWrite(pkt, false);
+                    // V20.6.1 — gentle pacing. Android's BLE write-without-
+                    // response has no flow control: flooding a whole sector
+                    // (~23 pkts) at once can overflow the controller TX buffer
+                    // and silently drop packets → sector CRC fail → stall mid-%.
+                    // A short breather every 8 packets lets the OS flush. Adds
+                    // only ~1 s over a full firmware; harmless on desktop.
+                    for (let i = 0; i < pkts.length; i++) {
+                        await otaWrite(pkts[i], false);
+                        if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3));
+                    }
                 } catch (e) {
                     // A write failed. On the LAST sector this is expected —
                     // the device finalizes and reboots, dropping the BLE
