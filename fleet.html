@@ -66,7 +66,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.1.0</span></h1>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.2.0</span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
 
@@ -113,13 +113,20 @@ const ENTER_TIMEOUT    = 7000;   // ENTER-OTA per-attempt timeout
 const ENTER_RETRIES    = 3;
 const IS_ANDROID       = /android/i.test(navigator.userAgent);
 
+// Tracking DB — stesso DB/protocollo della pagina cliente (upgrade.takeoff.pro).
+// Il token è lo stesso (già pubblico lato client): gate anti-spam, non dà
+// accesso al DB né alla dashboard (password separate in config.php).
+const API_BASE  = 'https://upgrade.takeoff.pro/api';
+const API_TOKEN = '3350d8db9b4a2edcb5034d29a3ee36b90ffa1da28c2c59b7b2d712f5285e933f';
+
 // =====================================================================
 // Stato
 // =====================================================================
 let firmwareBytes = null;
 let firmwareVersion = null;
 let busy = false;
-const rows = new Map();   // device.id -> { device, el, dot, prog, msg, chk, state }
+const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
+const dbRoster = new Map();  // serial -> { serial, current_firmware, last_seen_at, notes }
 
 // =====================================================================
 // UI helpers
@@ -131,6 +138,37 @@ function log(msg) {
   $('log').scrollTop = $('log').scrollHeight;
 }
 function showWarn(html) { const w = $('warnBox'); w.innerHTML = html; w.hidden = false; }
+
+// =====================================================================
+// DB — roster + log eventi (stesso DB della pagina cliente)
+// =====================================================================
+async function loadRoster() {
+  try {
+    const res = await fetch(`${API_BASE}/list.php`, { headers: { 'X-Wazlley-Key': API_TOKEN } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.ok && Array.isArray(data.machines)) {
+      dbRoster.clear();
+      for (const m of data.machines) dbRoster.set(m.serial, m);
+      log(`Roster DB: ${dbRoster.size} macchine note`);
+    }
+  } catch (e) {
+    log(`(roster DB non disponibile: ${e.message || e})`);
+  }
+}
+
+async function logEvent(serial, type, extras = {}) {
+  try {
+    await fetch(`${API_BASE}/insert.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Wazlley-Key': API_TOKEN },
+      body: JSON.stringify({ serial, type, meta: { source: 'fleet' }, ...extras }),
+      keepalive: true,
+    });
+  } catch (e) {
+    log(`(log evento "${type}" fallito: ${e.message || e})`);
+  }
+}
 
 // =====================================================================
 // Firmware
@@ -321,6 +359,14 @@ function renderDevice(device) {
     state: 'idle',
   };
   row.nameEl.textContent = device.name || device.id;
+  // Versione installata nota dal DB (se presente): mostra e, se già allineata
+  // al target, deseleziona di default così "Aggiorna selezionati" la salta.
+  const known = dbRoster.get(device.name);
+  if (known && known.current_firmware) {
+    const upToDate = known.current_firmware === firmwareVersion;
+    row.msg.textContent = `Installato: ${known.current_firmware}${upToDate ? ' · già aggiornato ✓' : ''}`;
+    if (upToDate) row.chk.checked = false;
+  }
   row.retryBtn.addEventListener('click', () => updateSequence([row]));
   rows.set(device.id, row);
   $('deviceList').appendChild(el);
@@ -342,16 +388,44 @@ async function refreshDevices() {
 }
 
 function updateEmptyState() {
-  const has = rows.size > 0;
-  $('updateAllBtn').disabled = !has || busy || !firmwareBytes;
+  const hasGranted = rows.size > 0;
+  const hasAny = hasGranted || dbRoster.size > 0;
+  $('updateAllBtn').disabled = !hasGranted || busy || !firmwareBytes;
   let empty = $('deviceList').querySelector('.empty');
-  if (!has && !empty) {
+  if (!hasAny && !empty) {
     empty = document.createElement('div');
     empty.className = 'empty';
     empty.textContent = 'Nessuno sparapallone autorizzato. Premi "+ Aggiungi sparapallone" per ognuno (una volta sola).';
     $('deviceList').appendChild(empty);
-  } else if (has && empty) {
+  } else if (hasAny && empty) {
     empty.remove();
+  }
+}
+
+// Macchine note al DB ma non ancora autorizzate in QUESTO browser: mostrate
+// come info (non aggiornabili finché non le aggiungi con "+ Aggiungi").
+function renderDbOnlyMachines() {
+  const granted = new Set([...rows.values()].map(r => r.device.name));
+  for (const [serial, m] of dbRoster) {
+    if (granted.has(serial)) continue;
+    if ($('deviceList').querySelector(`[data-dbserial="${CSS.escape(serial)}"]`)) continue;
+    const el = document.createElement('div');
+    el.className = 'device';
+    el.style.opacity = '0.6';
+    el.setAttribute('data-dbserial', serial);
+    const fw = m.current_firmware || '?';
+    const upToDate = m.current_firmware === firmwareVersion;
+    el.innerHTML = `
+      <div class="device-head">
+        <span class="dot idle" style="margin-left:30px;"></span>
+        <span class="device-name"></span>
+        <span class="device-state state-lbl"></span>
+      </div>
+      <div class="device-msg">Registrata nel DB ma non in questo browser. Premi "+ Aggiungi sparapallone" e selezionala per aggiornarla.</div>`;
+    el.querySelector('.device-name').textContent = serial;
+    el.querySelector('.state-lbl').textContent =
+      (upToDate ? `già ${fw} ✓` : `installato ${fw}`) + ' · da autorizzare';
+    $('deviceList').appendChild(el);
   }
 }
 
@@ -384,23 +458,32 @@ async function updateSequence(targetRows) {
 
   let okCount = 0, failCount = 0;
   for (const row of targetRows) {
+    const serial = row.device.name;
+    const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
     setState(row, 'connecting', '');
     row.prog.style.width = '0%';
-    log(`▶ ${row.device.name}: inizio`);
+    log(`▶ ${serial}: inizio`);
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    logEvent(serial, 'ota_started', { from_version: fromVer, to_version: firmwareVersion });
     try {
       await otaUpdateOne(row.device, pct => {
         setState(row, 'flashing');
         row.prog.style.width = pct.toFixed(1) + '%';
       });
+      const dur = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0) / 1000);
       row.prog.style.width = '100%';
-      setState(row, 'done', 'Riavvio sul nuovo firmware…');
-      log(`✅ ${row.device.name}: completato`);
+      setState(row, 'done', `Riavvio su ${firmwareVersion}…`);
+      log(`✅ ${serial}: completato in ${dur}s`);
+      // aggiorna il roster locale così il render riflette la nuova versione
+      dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
+      logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
       okCount++;
     } catch (e) {
       const m = e.message || String(e);
       if (m.includes('MOTORI')) setState(row, 'motors', m);
       else setState(row, 'failed', m);
-      log(`❌ ${row.device.name}: ${m}`);
+      log(`❌ ${serial}: ${m}`);
+      logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: m });
       failCount++;
     }
     await new Promise(r => setTimeout(r, 800)); // pausa tra una e l'altra
@@ -428,7 +511,9 @@ $('updateAllBtn').addEventListener('click', () => {
     return;
   }
   try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
+  await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();
+  renderDbOnlyMachines();
   updateEmptyState();
 })();
 </script>
