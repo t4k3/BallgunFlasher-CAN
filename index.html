@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.4.8</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.4.9</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -288,7 +288,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.4.8 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.4.9 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span style="margin-left:auto;">
             <a href="tools/windows-usb-fix.bat" download
@@ -1328,6 +1328,12 @@ async function otaConnect() {
         ota.char    = await svc.getCharacteristic(OTA_CHAR_UUID);
         await ota.char.startNotifications();
         ota.char.addEventListener('characteristicvaluechanged', otaOnNotify);
+        // Android: let notifications (CCCD) + connection-param/PHY negotiation
+        // settle before the first command, otherwise the very first ENTER-OTA
+        // ack notification is dropped → "timeout" before streaming even starts.
+        // Desktop is fine with a short wait; Android needs more.
+        const settleMs = /android/i.test(navigator.userAgent) ? 1200 : 300;
+        await new Promise(r => setTimeout(r, settleMs));
         otaSetStatus(true, `Connected: ${ota.device.name}`);
         log(`connected to ${ota.device.name}`, 'OTA');
         return true;
@@ -1375,10 +1381,18 @@ async function otaRunUpdate(binData) {
         const fw = new Uint8Array(binData);
         log(`firmware: ${(fw.length / 1024).toFixed(1)} KB`, 'OTA');
 
-        // 1) ENTER OTA MODE (FE 05)
-        let p = otaWaitNotify(3000);
-        await otaWrite([0xFE, 0x05], true);
-        let r = await p;
+        // 1) ENTER OTA MODE (FE 05) — with retry. Android may still drop the
+        // first ack notification; retry a few times with a generous timeout.
+        let r = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const p = otaWaitNotify(7000);
+            await otaWrite([0xFE, 0x05], true);
+            try { r = await p; break; }
+            catch (e) {
+                log(`ENTER OTA: no reply (attempt ${attempt}/3)`, 'OTA');
+                if (attempt === 3) throw new Error('device not responding to ENTER OTA — move closer / power-cycle and retry');
+            }
+        }
         // V20.6.0+: firmware rejects OTA while motors are enabled or still
         // spinning, replying FE E0 09 (BLE_ERR_MOTORS_RUNNING) instead of FE 05 00.
         if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)
