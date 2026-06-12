@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ballgun Fleet Update (internal)</title>
+<style>
+  :root {
+    --bg:#0b0b10; --card:#16161e; --text:#f3f3f5; --muted:#9aa0aa;
+    --accent:#a855f7; --accent-dark:#8b3fd6; --ok:#10b981; --err:#ef4444;
+    --warn:#f59e0b; --border:#262630; --row:#1a1a25;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; min-height:100vh; }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 18px 80px; }
+  header { margin-bottom:22px; }
+  h1 { font-size:24px; margin:0 0 4px; font-weight:700; }
+  h1 .ver { font-size:13px; font-weight:600; color:var(--muted); margin-left:8px; }
+  .subtitle { color:var(--muted); font-size:13px; margin:0; }
+  .target { background:var(--card); border:1px solid var(--border); border-radius:12px;
+    padding:14px 16px; margin:18px 0; display:flex; align-items:baseline; justify-content:space-between; }
+  .target .label { font-size:13px; color:var(--muted); }
+  .target .value { font-size:20px; font-weight:700; color:var(--accent); }
+  .bar { display:flex; gap:10px; margin:16px 0; flex-wrap:wrap; }
+  button {
+    padding:12px 18px; font-size:15px; font-weight:700; border:none; border-radius:10px;
+    cursor:pointer; transition:background .15s ease, opacity .15s ease;
+  }
+  button.primary { background:var(--accent); color:#fff; flex:1; min-width:180px; }
+  button.primary:hover:not(:disabled) { background:var(--accent-dark); }
+  button.ghost { background:var(--row); color:var(--text); border:1px solid var(--border); }
+  button.small { padding:7px 12px; font-size:13px; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .device {
+    background:var(--row); border:1px solid var(--border); border-radius:12px;
+    padding:14px 16px; margin-bottom:10px;
+  }
+  .device-head { display:flex; align-items:center; gap:12px; }
+  .device-name { font-weight:700; font-size:15px; font-variant-numeric:tabular-nums; }
+  .device-state { margin-left:auto; font-size:13px; color:var(--muted); display:flex; align-items:center; gap:8px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.idle { background:#6b7280; }
+  .dot.run  { background:var(--accent); animation:pulse 1s infinite; }
+  .dot.ok   { background:var(--ok); }
+  .dot.err  { background:var(--err); }
+  .dot.warn { background:var(--warn); }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .device-prog { height:8px; background:#10101a; border-radius:5px; overflow:hidden; margin-top:10px; }
+  .device-prog > div { height:100%; width:0%; background:var(--accent); transition:width .2s ease; }
+  .device-msg { font-size:12px; color:var(--muted); margin-top:6px; min-height:14px; }
+  .device input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); }
+  .empty { color:var(--muted); font-size:14px; text-align:center; padding:26px 0; }
+  .warnbox { background:#2a1a0a; border:1px solid #6b3a1a; color:#f5c98b;
+    padding:12px 14px; border-radius:10px; font-size:13px; margin-bottom:16px; line-height:1.5; }
+  details { margin-top:18px; font-size:13px; color:var(--muted); }
+  summary { cursor:pointer; user-select:none; }
+  pre.log { background:#0a0a10; color:#c8c9d0; padding:12px; border-radius:8px;
+    max-height:260px; overflow:auto; font-size:11px;
+    font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; margin:8px 0 0; }
+  footer { color:var(--muted); font-size:12px; margin-top:26px; text-align:center; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.1.0</span></h1>
+    <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
+  </header>
+
+  <div id="warnBox" class="warnbox" hidden></div>
+
+  <div class="target">
+    <span class="label">Firmware da installare</span>
+    <span class="value" id="targetVer">…</span>
+  </div>
+
+  <div class="bar">
+    <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
+    <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
+    <button class="ghost" id="refreshBtn">↻ Aggiorna lista</button>
+  </div>
+
+  <div id="deviceList"></div>
+
+  <details open>
+    <summary>Log dettagliato</summary>
+    <pre class="log" id="log"></pre>
+  </details>
+
+  <footer>
+    Ballgun Fleet · solo uso interno t4k3 · Chrome/Edge desktop o Chrome Android (no iOS).<br>
+    Le macchine devono essere accese e in raggio Bluetooth. Aggiornamento <b>sequenziale</b>.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// Config + costanti protocollo (devono combaciare col firmware)
+// =====================================================================
+const FIRMWARE_BIN_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/STANDALONE/BallgunSTANDALONE.bin';
+const OTA_SERVICE_UUID = 'b69abf60-e699-beb7-624a-e625c0b1f625';
+const OTA_CHAR_UUID    = 'a7e5c5dc-918f-45b7-d64e-f90ee72691f9';
+const OTA_SECTOR_SIZE  = 4096;
+const OTA_PKT_PAYLOAD  = 180;
+const OTA_ACK_TIMEOUT  = 5000;   // sector ACK timeout (ms)
+const OTA_MAX_RETRIES  = 5;      // per-sector retries
+const ENTER_TIMEOUT    = 7000;   // ENTER-OTA per-attempt timeout
+const ENTER_RETRIES    = 3;
+const IS_ANDROID       = /android/i.test(navigator.userAgent);
+
+// =====================================================================
+// Stato
+// =====================================================================
+let firmwareBytes = null;
+let firmwareVersion = null;
+let busy = false;
+const rows = new Map();   // device.id -> { device, el, dot, prog, msg, chk, state }
+
+// =====================================================================
+// UI helpers
+// =====================================================================
+const $ = id => document.getElementById(id);
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent += `[${t}] ${msg}\n`;
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function showWarn(html) { const w = $('warnBox'); w.innerHTML = html; w.hidden = false; }
+
+// =====================================================================
+// Firmware
+// =====================================================================
+function extractVersion(uint8) {
+  const text = new TextDecoder('iso-8859-1').decode(uint8);
+  const m = text.match(/V\d+\.\d+\.\d+/);
+  return m ? m[0] : null;
+}
+async function downloadFirmware() {
+  const res = await fetch(`${FIRMWARE_BIN_URL}?cb=${Date.now()}`, { cache:'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
+  firmwareBytes = new Uint8Array(await res.arrayBuffer());
+  firmwareVersion = extractVersion(firmwareBytes) || '(sconosciuta)';
+  $('targetVer').textContent = `${firmwareVersion} · ${(firmwareBytes.length/1024).toFixed(0)} KB`;
+  log(`Firmware caricato: ${firmwareVersion} (${firmwareBytes.length} byte)`);
+}
+
+// =====================================================================
+// OTA — CRC16 CCITT + costruzione pacchetti settore
+// =====================================================================
+function otaCrc16(bytes) {
+  let crc = 0xFFFF;
+  for (let i=0;i<bytes.length;i++) {
+    crc ^= bytes[i] << 8;
+    for (let b=0;b<8;b++) crc = (crc & 0x8000) ? ((crc<<1)^0x1021)&0xFFFF : (crc<<1)&0xFFFF;
+  }
+  return crc & 0xFFFF;
+}
+function otaBuildSectorPackets(sectorIndex, data) {
+  const crc = otaCrc16(data);
+  const sLo = sectorIndex & 0xFF, sHi = (sectorIndex>>8) & 0xFF;
+  const pkts = [];
+  let off = 0, seq = 0;
+  while (off < data.length) {
+    const isLast = (off + OTA_PKT_PAYLOAD >= data.length);
+    if (isLast) {
+      pkts.push([sLo, sHi, 0xFF, ...data.slice(off), (crc>>8)&0xFF, crc&0xFF]);
+      off = data.length;
+    } else {
+      pkts.push([sLo, sHi, seq, ...data.slice(off, off+OTA_PKT_PAYLOAD)]);
+      off += OTA_PKT_PAYLOAD;
+    }
+    seq++;
+  }
+  // niente pacchetti dati esattamente di 20 byte (verrebbero scambiati per comando)
+  if (pkts.length >= 2 && pkts[pkts.length-1].length === 20) {
+    const prev = pkts[pkts.length-2], last = pkts[pkts.length-1];
+    const moved = prev.splice(prev.length-8, 8);
+    last.splice(3, 0, ...moved);
+  }
+  return pkts;
+}
+
+// =====================================================================
+// OTA — aggiorna UN dispositivo (connessione propria, isolata)
+// =====================================================================
+async function otaUpdateOne(device, onProgress) {
+  const fw = firmwareBytes;
+  let char = null, waiter = null;
+  const onNotify = ev => {
+    const v = new Uint8Array(ev.target.value.buffer);
+    if (v.length === 12 && v[0] === 0xFE && v[1] === 0x10) return; // PROGRESS, informativo
+    if (waiter) { const w = waiter; waiter = null; w(v); }
+  };
+  const waitNotify = ms => new Promise((resolve, reject) => {
+    const t = setTimeout(() => { if (waiter) { waiter = null; reject(new Error('timeout')); } }, ms);
+    waiter = v => { clearTimeout(t); resolve(v); };
+  });
+  const write = async (bytes, withResp) => {
+    const buf = Uint8Array.from(bytes);
+    if (withResp) await char.writeValueWithResponse(buf);
+    else if (char.writeValueWithoutResponse) await char.writeValueWithoutResponse(buf);
+    else await char.writeValue(buf);
+  };
+
+  // --- connessione ---
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(OTA_SERVICE_UUID);
+  char = await svc.getCharacteristic(OTA_CHAR_UUID);
+  await char.startNotifications();
+  char.addEventListener('characteristicvaluechanged', onNotify);
+  // assestamento (Android: notifiche/PHY) prima del primo comando
+  await new Promise(r => setTimeout(r, IS_ANDROID ? 1200 : 300));
+
+  try {
+    // --- 1) ENTER OTA con retry (la prima notifica su Android può perdersi) ---
+    let r = null;
+    for (let a=1; a<=ENTER_RETRIES; a++) {
+      const p = waitNotify(ENTER_TIMEOUT);
+      await write([0xFE, 0x05], true);
+      try { r = await p; break; }
+      catch (e) { if (a === ENTER_RETRIES) throw new Error('nessuna risposta a ENTER OTA'); }
+    }
+    if (r.length >= 3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)
+      throw new Error('MOTORI ACCESI — ferma i motori');
+    if (!(r.length >= 3 && r[0]===0xFE && r[1]===0x05)) throw new Error('ENTER OTA: ACK errato');
+
+    // --- 2) START (20 byte) ---
+    const start = new Uint8Array(20);
+    start[0]=0x00; start[1]=0x01;
+    start[4]=fw.length & 0xFF; start[5]=(fw.length>>8)&0xFF;
+    start[6]=(fw.length>>16)&0xFF; start[7]=(fw.length>>24)&0xFF;
+    const sc = otaCrc16(start.slice(0,18));
+    start[18]=(sc>>8)&0xFF; start[19]=sc&0xFF;
+    const pStart = waitNotify(20000);
+    await write(start, true);
+    r = await pStart;
+    if (!(r.length>=4 && r[0]===0x00 && r[1]===0x03 && r[2]===0x00 && r[3]===0x00))
+      throw new Error('START rifiutato');
+
+    // --- 3) streaming settori ---
+    const nSectors = Math.ceil(fw.length / OTA_SECTOR_SIZE);
+    let s = 0;
+    while (s < nSectors) {
+      const isLast = (s === nSectors-1);
+      const data = fw.slice(s*OTA_SECTOR_SIZE, s*OTA_SECTOR_SIZE + OTA_SECTOR_SIZE);
+      const pkts = otaBuildSectorPackets(s, data);
+      let ok = false;
+      for (let a=0; a<OTA_MAX_RETRIES && !ok; a++) {
+        const ackP = waitNotify(OTA_ACK_TIMEOUT);
+        try {
+          for (let i=0;i<pkts.length;i++) {
+            await write(pkts[i], false);
+            if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3)); // pacing Android
+          }
+        } catch (e) { if (isLast) { ok = true; break; } throw e; }
+        let ack;
+        try { ack = await ackP; }
+        catch (e) { if (isLast) { ok = true; break; } continue; }
+        if (ack.length < 4) continue;
+        const status = ack[2] | (ack[3]<<8);
+        if (status === 0x0000) ok = true;
+        else if (status === 0x0002) { s = (ack[0]|(ack[1]<<8)); ok = true; } // resync
+      }
+      if (!ok) throw new Error(`settore ${s} fallito`);
+      s++;
+      onProgress((s / nSectors) * 100);
+    }
+  } finally {
+    try { char.removeEventListener('characteristicvaluechanged', onNotify); } catch(e){}
+    try { device.gatt.disconnect(); } catch(e){}
+  }
+}
+
+// =====================================================================
+// Stato per-riga
+// =====================================================================
+function setState(row, state, msg) {
+  row.state = state;
+  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn'}[state] || 'idle');
+  const labels = { idle:'In attesa', connecting:'Connessione…', flashing:'Aggiornamento…',
+                   done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi' };
+  row.stateLabel.textContent = labels[state] || state;
+  if (msg !== undefined) row.msg.textContent = msg;
+  if (state === 'failed' || state === 'motors') {
+    row.retryBtn.hidden = false; row.retryBtn.disabled = busy;
+  } else {
+    row.retryBtn.hidden = true;
+  }
+}
+
+// =====================================================================
+// Render lista dispositivi (da getDevices)
+// =====================================================================
+function renderDevice(device) {
+  if (rows.has(device.id)) return rows.get(device.id);
+  const el = document.createElement('div');
+  el.className = 'device';
+  el.innerHTML = `
+    <div class="device-head">
+      <input type="checkbox" checked>
+      <span class="device-name"></span>
+      <span class="device-state"><span class="dot idle"></span><span class="lbl">In attesa</span>
+        <button class="ghost small retry" hidden>Riprova</button></span>
+    </div>
+    <div class="device-prog"><div></div></div>
+    <div class="device-msg"></div>`;
+  const row = {
+    device, el,
+    chk: el.querySelector('input'),
+    nameEl: el.querySelector('.device-name'),
+    dot: el.querySelector('.dot'),
+    stateLabel: el.querySelector('.lbl'),
+    retryBtn: el.querySelector('.retry'),
+    prog: el.querySelector('.device-prog > div'),
+    msg: el.querySelector('.device-msg'),
+    state: 'idle',
+  };
+  row.nameEl.textContent = device.name || device.id;
+  row.retryBtn.addEventListener('click', () => updateSequence([row]));
+  rows.set(device.id, row);
+  $('deviceList').appendChild(el);
+  return row;
+}
+
+async function refreshDevices() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+    showWarn(`Il tuo Chrome non espone <b>getDevices()</b> (serve per ricordare i dispositivi).
+      Abilita <code>chrome://flags/#enable-web-bluetooth-new-permissions-backend</code> e riavvia,
+      oppure usa "Aggiungi sparapallone" ogni volta.`);
+    return;
+  }
+  const devices = await navigator.bluetooth.getDevices();
+  const wazlley = devices.filter(d => (d.name||'').toLowerCase().includes('wazlley'));
+  for (const d of wazlley) renderDevice(d);
+  updateEmptyState();
+  log(`Dispositivi autorizzati: ${rows.size}`);
+}
+
+function updateEmptyState() {
+  const has = rows.size > 0;
+  $('updateAllBtn').disabled = !has || busy || !firmwareBytes;
+  let empty = $('deviceList').querySelector('.empty');
+  if (!has && !empty) {
+    empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Nessuno sparapallone autorizzato. Premi "+ Aggiungi sparapallone" per ognuno (una volta sola).';
+    $('deviceList').appendChild(empty);
+  } else if (has && empty) {
+    empty.remove();
+  }
+}
+
+// =====================================================================
+// Aggiunta dispositivo (grant una-tantum)
+// =====================================================================
+$('addBtn').addEventListener('click', async () => {
+  try {
+    const d = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'wazlley' }],
+      optionalServices: [OTA_SERVICE_UUID],
+    });
+    renderDevice(d);
+    updateEmptyState();
+    log(`Aggiunto: ${d.name}`);
+  } catch (e) { log(`(aggiunta annullata: ${e.message || e})`); }
+});
+
+$('refreshBtn').addEventListener('click', refreshDevices);
+
+// =====================================================================
+// Update sequenziale
+// =====================================================================
+async function updateSequence(targetRows) {
+  if (busy || !firmwareBytes) return;
+  busy = true;
+  $('updateAllBtn').disabled = true;
+  $('addBtn').disabled = true;
+  rows.forEach(r => { r.retryBtn.disabled = true; });
+
+  let okCount = 0, failCount = 0;
+  for (const row of targetRows) {
+    setState(row, 'connecting', '');
+    row.prog.style.width = '0%';
+    log(`▶ ${row.device.name}: inizio`);
+    try {
+      await otaUpdateOne(row.device, pct => {
+        setState(row, 'flashing');
+        row.prog.style.width = pct.toFixed(1) + '%';
+      });
+      row.prog.style.width = '100%';
+      setState(row, 'done', 'Riavvio sul nuovo firmware…');
+      log(`✅ ${row.device.name}: completato`);
+      okCount++;
+    } catch (e) {
+      const m = e.message || String(e);
+      if (m.includes('MOTORI')) setState(row, 'motors', m);
+      else setState(row, 'failed', m);
+      log(`❌ ${row.device.name}: ${m}`);
+      failCount++;
+    }
+    await new Promise(r => setTimeout(r, 800)); // pausa tra una e l'altra
+  }
+
+  busy = false;
+  $('updateAllBtn').disabled = false;
+  $('addBtn').disabled = false;
+  rows.forEach(r => { if (r.state==='failed'||r.state==='motors') r.retryBtn.disabled = false; });
+  log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
+}
+
+$('updateAllBtn').addEventListener('click', () => {
+  const selected = [...rows.values()].filter(r => r.chk.checked && r.state !== 'done');
+  if (!selected.length) { log('Nessuno sparapallone selezionato (o già aggiornati).'); return; }
+  updateSequence(selected);
+});
+
+// =====================================================================
+// Avvio
+// =====================================================================
+(async () => {
+  if (!navigator.bluetooth) {
+    showWarn('Web Bluetooth non disponibile. Usa Chrome/Edge su desktop o Chrome su Android (no iOS).');
+    return;
+  }
+  try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
+  await refreshDevices();
+  updateEmptyState();
+})();
+</script>
+</body>
+</html>
