@@ -60,13 +60,36 @@
     font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; margin:8px 0 0; }
   footer { color:var(--muted); font-size:12px; margin-top:26px; text-align:center; }
   a { color:var(--accent); }
+  /* riepilogo + registro compatto (scala a centinaia di macchine) */
+  .summary { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 6px; }
+  .chip { background:var(--card); border:1px solid var(--border); border-radius:20px;
+          padding:6px 12px; font-size:13px; color:var(--muted); }
+  .chip b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .chip.ok b { color:var(--ok); }  .chip.old b { color:var(--warn); }
+  h2.sec { font-size:13px; text-transform:uppercase; letter-spacing:.04em;
+           color:var(--muted); margin:22px 0 8px; font-weight:700; }
+  h2.sec .hint { text-transform:none; letter-spacing:0; font-weight:400; font-size:12px; }
+  .regtools { display:flex; gap:10px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  #search { flex:1; min-width:160px; padding:9px 12px; background:#10101a;
+            border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; }
+  .regtools label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .regtools input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); }
+  .registry-list { max-height:380px; overflow:auto; border:1px solid var(--border); border-radius:10px; }
+  .reg-row { display:flex; align-items:center; gap:10px; padding:7px 12px;
+             border-bottom:1px solid #1d1d27; font-size:13px; }
+  .reg-row:last-child { border-bottom:none; }
+  .reg-row .rdot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--muted); }
+  .reg-row .rdot.ok { background:var(--ok); }  .reg-row .rdot.old { background:var(--warn); }
+  .reg-row .rs { font-weight:700; font-variant-numeric:tabular-nums; }
+  .reg-row .rg { font-size:11px; color:var(--accent); }
+  .reg-row .rv { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.2.0</span></h1>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.0</span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
 
@@ -77,15 +100,26 @@
     <span class="value" id="targetVer">…</span>
   </div>
 
+  <div id="summary" class="summary"></div>
+
+  <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span></h2>
   <div class="bar">
     <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
     <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
-    <button class="ghost" id="refreshBtn">↻ Aggiorna lista</button>
+    <button class="ghost" id="refreshBtn">↻ Ricarica</button>
   </div>
-
   <div id="deviceList"></div>
 
-  <details open>
+  <details class="registry">
+    <summary>Registro fleet completo (<span id="regCount">0</span>)</summary>
+    <div class="regtools">
+      <input id="search" type="text" placeholder="🔍 cerca seriale o versione…">
+      <label><input type="checkbox" id="onlyOld"> solo da aggiornare</label>
+    </div>
+    <div id="registryList" class="registry-list"></div>
+  </details>
+
+  <details>
     <summary>Log dettagliato</summary>
     <pre class="log" id="log"></pre>
   </details>
@@ -402,32 +436,59 @@ function updateEmptyState() {
   }
 }
 
-// Macchine note al DB ma non ancora autorizzate in QUESTO browser: mostrate
-// come info (non aggiornabili finché non le aggiungi con "+ Aggiungi").
-function renderDbOnlyMachines() {
+// Riepilogo fleet (conteggi per versione) — scala a centinaia di macchine.
+function renderSummary() {
+  let onTarget = 0;
+  for (const m of dbRoster.values()) if (m.current_firmware === firmwareVersion) onTarget++;
+  const total = dbRoster.size, outdated = total - onTarget;
+  const el = $('summary'); el.innerHTML = '';
+  const chip = (cls, label, n) => {
+    const c = document.createElement('span'); c.className = 'chip ' + cls;
+    c.innerHTML = `${label} <b>${n}</b>`; el.appendChild(c);
+  };
+  if (total === 0) { el.innerHTML = '<span class="chip">Nessuna macchina nel registro DB</span>'; return; }
+  chip('', 'Totale', total);
+  chip('ok', `Su ${firmwareVersion || 'target'}`, onTarget);
+  chip('old', 'Da aggiornare', outdated);
+}
+
+// Registro fleet completo: tabella COMPATTA (una riga per macchina),
+// ricercabile e filtrabile. Sola lettura — per aggiornare serve autorizzare
+// la macchina in questo browser (sezione "Da aggiornare ora").
+function renderRegistry() {
+  const q = ($('search').value || '').toLowerCase().trim();
+  const onlyOld = $('onlyOld').checked;
   const granted = new Set([...rows.values()].map(r => r.device.name));
-  for (const [serial, m] of dbRoster) {
-    if (granted.has(serial)) continue;
-    if ($('deviceList').querySelector(`[data-dbserial="${CSS.escape(serial)}"]`)) continue;
-    const el = document.createElement('div');
-    el.className = 'device';
-    el.style.opacity = '0.6';
-    el.setAttribute('data-dbserial', serial);
-    const fw = m.current_firmware || '?';
-    const upToDate = m.current_firmware === firmwareVersion;
-    el.innerHTML = `
-      <div class="device-head">
-        <span class="dot idle" style="margin-left:30px;"></span>
-        <span class="device-name"></span>
-        <span class="device-state state-lbl"></span>
-      </div>
-      <div class="device-msg">Registrata nel DB ma non in questo browser. Premi "+ Aggiungi sparapallone" e selezionala per aggiornarla.</div>`;
-    el.querySelector('.device-name').textContent = serial;
-    el.querySelector('.state-lbl').textContent =
-      (upToDate ? `già ${fw} ✓` : `installato ${fw}`) + ' · da autorizzare';
-    $('deviceList').appendChild(el);
+  const list = $('registryList'); list.innerHTML = '';
+  $('regCount').textContent = dbRoster.size;
+
+  const items = [...dbRoster.values()].sort((a, b) => a.serial.localeCompare(b.serial));
+  let shown = 0;
+  for (const m of items) {
+    const v = m.current_firmware || '?';
+    const isOld = v !== firmwareVersion;
+    if (onlyOld && !isOld) continue;
+    if (q && !(m.serial.toLowerCase().includes(q) || v.toLowerCase().includes(q))) continue;
+    const row = document.createElement('div'); row.className = 'reg-row';
+    const dot = document.createElement('span'); dot.className = 'rdot ' + (isOld ? 'old' : 'ok');
+    const rs = document.createElement('span'); rs.className = 'rs'; rs.textContent = m.serial;
+    row.append(dot, rs);
+    if (granted.has(m.serial)) {
+      const g = document.createElement('span'); g.className = 'rg'; g.textContent = '● autorizzata';
+      row.append(g);
+    }
+    const rv = document.createElement('span'); rv.className = 'rv'; rv.textContent = v;
+    row.append(rv);
+    list.appendChild(row); shown++;
+  }
+  if (!shown) {
+    const e = document.createElement('div'); e.className = 'reg-row';
+    e.style.color = 'var(--muted)'; e.textContent = 'Nessun risultato.';
+    list.appendChild(e);
   }
 }
+
+function renderFleetViews() { renderSummary(); renderRegistry(); }
 
 // =====================================================================
 // Aggiunta dispositivo (grant una-tantum)
@@ -493,6 +554,7 @@ async function updateSequence(targetRows) {
   $('updateAllBtn').disabled = false;
   $('addBtn').disabled = false;
   rows.forEach(r => { if (r.state==='failed'||r.state==='motors') r.retryBtn.disabled = false; });
+  renderFleetViews();   // aggiorna riepilogo + registro con le nuove versioni
   log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
 }
 
@@ -513,9 +575,13 @@ $('updateAllBtn').addEventListener('click', () => {
   try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
   await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();
-  renderDbOnlyMachines();
+  renderFleetViews();
   updateEmptyState();
 })();
+
+// Ricerca / filtro del registro
+$('search').addEventListener('input', renderRegistry);
+$('onlyOld').addEventListener('change', renderRegistry);
 </script>
 </body>
 </html>
