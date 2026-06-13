@@ -89,7 +89,8 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.1</span></h1>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.1</span>
+        <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
 
@@ -172,6 +173,27 @@ function log(msg) {
   $('log').scrollTop = $('log').scrollHeight;
 }
 function showWarn(html) { const w = $('warnBox'); w.innerHTML = html; w.hidden = false; }
+
+// Controllo "sto usando l'ultima versione?": confronta la versione di QUESTA
+// pagina (#pageVer) con version.json pubblicato. Verde = ok, giallo = ricarica.
+async function checkLatest() {
+  const mine = ($('pageVer').textContent || '').replace(/^v/i, '').trim();
+  try {
+    const res = await fetch('https://t4k3.github.io/BallgunFlasher-CAN/version.json?cb=' + Date.now(), { cache: 'no-store' });
+    const v = await res.json();
+    const latest = v.fleet;
+    const el = $('verCheck');
+    if (latest === mine) {
+      el.textContent = '✓ aggiornata';
+      el.style.color = 'var(--ok)';
+    } else {
+      el.textContent = `⚠ vecchia — ricarica`;
+      el.style.color = 'var(--warn)';
+      showWarn(`Stai usando una versione VECCHIA in cache (v${mine}). L'ultima è <b>v${latest}</b>. ` +
+               `Ricarica con <b>Cmd/Ctrl + Shift + R</b> (o chiudi e riapri la scheda).`);
+    }
+  } catch (e) { /* offline o version.json assente: non bloccare */ }
+}
 
 // =====================================================================
 // DB — roster + log eventi (stesso DB della pagina cliente)
@@ -594,6 +616,7 @@ $('updateAllBtn').addEventListener('click', () => {
     showWarn('Web Bluetooth non disponibile. Usa Chrome/Edge su desktop o Chrome su Android (no iOS).');
     return;
   }
+  checkLatest();             // "sto usando l'ultima versione della pagina?"
   try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
   await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();

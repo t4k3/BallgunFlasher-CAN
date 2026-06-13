@@ -359,6 +359,24 @@ if (!('serial' in navigator)) {
     }
 })();
 
+// "Sto usando l'ultima versione di QUESTA pagina?" — confronta flasher-x.y.z
+// nel footer con version.json. Se vecchia (cache), mostra un avviso evidente.
+(async () => {
+    const m = (document.getElementById('flasherBuild').textContent || '').match(/flasher-(\d+\.\d+\.\d+)/);
+    const mine = m ? m[1] : '?';
+    try {
+        const r = await fetch(`${FIRMWARE_BASE}/version.json?cb=${Date.now()}`, { cache: 'no-store' });
+        const v = await r.json();
+        const el = document.getElementById('flasherBuild');
+        if (v.flasher === mine) {
+            el.insertAdjacentHTML('afterend', ' <span style="color:#10b981;font-size:11px;">✓ aggiornata</span>');
+        } else {
+            el.insertAdjacentHTML('afterend',
+                ` <span style="color:#f59e0b;font-size:11px;font-weight:700;">⚠ versione vecchia in cache (hai ${mine}, ultima ${v.flasher}) — ricarica con Cmd/Ctrl+Shift+R</span>`);
+        }
+    } catch (e) { /* offline: ignora */ }
+})();
+
 async function connectDevice(key, panelTag) {
     const d = devs[key];
     try {
