@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.2</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.3</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -103,7 +103,8 @@
 
   <div id="summary" class="summary"></div>
 
-  <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span></h2>
+  <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span>
+      <span id="sessionDone" style="color:var(--ok); font-weight:700;"></span></h2>
   <div class="bar">
     <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
     <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
@@ -536,6 +537,27 @@ function renderRegistry() {
 
 function renderFleetViews() { renderSummary(); renderRegistry(); }
 
+// Contatore "aggiornate in questa sessione" + rimozione delle completate
+// dall'elenco attivo (così non si accumulano e resti focalizzato su ciò che
+// manca). La macchina resta comunque nel "Registro fleet completo" via DB.
+let sessionDone = 0;
+function bumpSessionDone() {
+  sessionDone++;
+  $('sessionDone').textContent = ` · ✓ ${sessionDone} aggiornate in questa sessione`;
+}
+function scheduleRemove(row) {
+  setTimeout(() => {
+    row.el.style.transition = 'opacity .4s ease';
+    row.el.style.opacity = '0';
+    setTimeout(() => {
+      try { row.el.remove(); } catch (e) {}
+      rows.delete(row.device.id);
+      updateEmptyState();
+      renderRegistry();   // aggiorna il flag "autorizzata" nel registro
+    }, 420);
+  }, 4000);  // mostra il ✓ verde 4s, poi sfuma e sparisce
+}
+
 // =====================================================================
 // Aggiunta dispositivo (grant una-tantum)
 // =====================================================================
@@ -585,6 +607,8 @@ async function updateSequence(targetRows) {
       dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
       logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
       okCount++;
+      bumpSessionDone();
+      scheduleRemove(row);   // togli la completata dall'elenco attivo (resta nel registro DB)
     } catch (e) {
       const m = e.message || String(e);
       if (m.includes('MOTORI')) setState(row, 'motors', m);
