@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.3</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.4</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -113,6 +113,7 @@
   </div>
   <div id="selMsg" class="device-msg" style="margin:-8px 0 8px; color:var(--warn);"></div>
   <div id="deviceList"></div>
+  <div id="hiddenDoneNote" class="device-msg" style="color:var(--ok);"></div>
 
   <details class="registry">
     <summary>Registro fleet completo (<span id="regCount">0</span>)</summary>
@@ -165,6 +166,7 @@ let firmwareVersion = null;
 let busy = false;
 const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
 const dbRoster = new Map();  // serial -> { serial, current_firmware, last_seen_at, notes }
+let hiddenDone = [];         // device già su target al caricamento (fuori dall'elenco attivo)
 
 // =====================================================================
 // UI helpers
@@ -415,8 +417,15 @@ function setState(row, state, msg) {
 // =====================================================================
 // Render lista dispositivi (da getDevices)
 // =====================================================================
-function renderDevice(device) {
+function renderDevice(device, force) {
   if (rows.has(device.id)) return rows.get(device.id);
+  // Già su target (secondo il DB): non ingombrare l'elenco attivo — mettila tra
+  // le "nascoste" (rivelabili/forzabili dal link). 'force' la mostra comunque.
+  const knownPre = dbRoster.get(device.name);
+  if (!force && knownPre && knownPre.current_firmware === firmwareVersion) {
+    if (!hiddenDone.some(d => d.id === device.id)) hiddenDone.push(device);
+    return null;
+  }
   const el = document.createElement('div');
   el.className = 'device';
   el.innerHTML = `
@@ -464,8 +473,9 @@ async function refreshDevices() {
   const devices = await navigator.bluetooth.getDevices();
   const wazlley = devices.filter(d => (d.name||'').toLowerCase().includes('wazlley'));
   for (const d of wazlley) renderDevice(d);
+  renderHiddenDoneNote();
   updateEmptyState();
-  log(`Dispositivi autorizzati: ${rows.size}`);
+  log(`Dispositivi autorizzati: ${wazlley.length} (${rows.size} da aggiornare, ${hiddenDone.length} già ok)`);
 }
 
 function updateEmptyState() {
@@ -537,6 +547,23 @@ function renderRegistry() {
 
 function renderFleetViews() { renderSummary(); renderRegistry(); }
 
+// Nota "N già aggiornate (nascoste)" + link per rivelarle/forzarle (utile se
+// il DB segna una versione che in realtà non è quella installata).
+function renderHiddenDoneNote() {
+  const el = $('hiddenDoneNote');
+  if (!hiddenDone.length) { el.textContent = ''; return; }
+  el.innerHTML = `✓ ${hiddenDone.length} già su ${firmwareVersion} in questo browser (nascoste) · ` +
+                 `<a href="#" id="showHidden" style="color:var(--accent); font-weight:700;">mostra / forza</a>`;
+  $('showHidden').addEventListener('click', (e) => {
+    e.preventDefault();
+    const toShow = hiddenDone.slice();
+    hiddenDone = [];
+    toShow.forEach(d => renderDevice(d, true));
+    renderHiddenDoneNote();
+    updateEmptyState();
+  });
+}
+
 // Contatore "aggiornate in questa sessione" + rimozione delle completate
 // dall'elenco attivo (così non si accumulano e resti focalizzato su ciò che
 // manca). La macchina resta comunque nel "Registro fleet completo" via DB.
@@ -567,7 +594,7 @@ $('addBtn').addEventListener('click', async () => {
       filters: [{ namePrefix: 'wazlley' }],
       optionalServices: [OTA_SERVICE_UUID],
     });
-    renderDevice(d);
+    renderDevice(d, true);   // aggiunta manuale: mostrala sempre (anche se il DB la dà aggiornata)
     updateEmptyState();
     log(`Aggiunto: ${d.name}`);
   } catch (e) { log(`(aggiunta annullata: ${e.message || e})`); }
@@ -661,6 +688,7 @@ $('updateAllBtn').addEventListener('click', () => {
   await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();
   renderFleetViews();
+  renderHiddenDoneNote();
   updateEmptyState();
 })();
 
