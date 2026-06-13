@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.1</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.2</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -106,9 +106,11 @@
   <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span></h2>
   <div class="bar">
     <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
+    <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
     <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
     <button class="ghost" id="refreshBtn">↻ Ricarica</button>
   </div>
+  <div id="selMsg" class="device-msg" style="margin:-8px 0 8px; color:var(--warn);"></div>
   <div id="deviceList"></div>
 
   <details class="registry">
@@ -602,9 +604,23 @@ async function updateSequence(targetRows) {
   log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
 }
 
+// Seleziona/forza tutte le macchine in raggio (anche quelle che il DB segna
+// "già aggiornato" — utile perché la versione del DB può non essere reale).
+$('selectAllBtn').addEventListener('click', () => {
+  let n = 0;
+  rows.forEach(r => { if (r.state !== 'done') { r.chk.checked = true; n++; } });
+  $('selMsg').textContent = n ? `${n} macchine selezionate.` : '';
+});
+
 $('updateAllBtn').addEventListener('click', () => {
   const selected = [...rows.values()].filter(r => r.chk.checked && r.state !== 'done');
-  if (!selected.length) { log('Nessuno sparapallone selezionato (o già aggiornati).'); return; }
+  if (!selected.length) {
+    $('selMsg').textContent = '⚠ Nessuna macchina selezionata. Le "già aggiornato" sono deselezionate ' +
+      '(la versione viene dal DB e può non essere reale): spunta le caselle o premi "Seleziona tutte" per forzare.';
+    log('Nessuno sparapallone selezionato.');
+    return;
+  }
+  $('selMsg').textContent = '';
   updateSequence(selected);
 });
 
