@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.0</span></h1>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.1</span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
 
@@ -279,6 +279,17 @@ async function otaUpdateOne(device, onProgress) {
     else await char.writeValue(buf);
   };
 
+  // Traccia la disconnessione del device: a fine OTA si riavvia DA SOLO e fa
+  // cadere il link — quello è il segnale che il finalize è andato a buon fine.
+  let gotDisconnect = false, discResolve = null;
+  const onDisconnect = () => { gotDisconnect = true; if (discResolve) { const f = discResolve; discResolve = null; f(); } };
+  const waitForReboot = ms => new Promise(res => {
+    if (gotDisconnect) return res();
+    const t = setTimeout(() => { discResolve = null; res(); }, ms);
+    discResolve = () => { clearTimeout(t); res(); };
+  });
+  device.addEventListener('gattserverdisconnected', onDisconnect);
+
   // --- connessione ---
   const server = await device.gatt.connect();
   const svc = await server.getPrimaryService(OTA_SERVICE_UUID);
@@ -342,9 +353,20 @@ async function otaUpdateOne(device, onProgress) {
       s++;
       onProgress((s / nSectors) * 100);
     }
+
+    // --- 4) finalize: NON disconnettere. Il firmware abortisce l'OTA sulla
+    // disconnessione BLE (V20.5.1) e il finalize+reboot dura ~2,3s; un
+    // disconnect proattivo qui interrompeva il finalize e la macchina restava
+    // sulla versione vecchia. Aspetta invece che il device si riavvii DA SOLO
+    // (il link cade) = finalize riuscito.
+    await waitForReboot(8000);
   } finally {
-    try { char.removeEventListener('characteristicvaluechanged', onNotify); } catch(e){}
-    try { device.gatt.disconnect(); } catch(e){}
+    try { device.removeEventListener('gattserverdisconnected', onDisconnect); } catch(e){}
+    try { char && char.removeEventListener('characteristicvaluechanged', onNotify); } catch(e){}
+    // Disconnetti solo se ancora connesso (percorso d'errore: il device NON si
+    // è riavviato). Su successo è già caduto da solo dopo il reboot, quindi qui
+    // non tocchiamo nulla e non innescriamo l'abort dell'OTA.
+    try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
   }
 }
 
