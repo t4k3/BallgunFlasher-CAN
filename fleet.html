@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.3.4</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.4.0</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -151,6 +151,14 @@ const OTA_MAX_RETRIES  = 5;      // per-sector retries
 const ENTER_TIMEOUT    = 7000;   // ENTER-OTA per-attempt timeout
 const ENTER_RETRIES    = 3;
 const IS_ANDROID       = /android/i.test(navigator.userAgent);
+// Retry automatico per-macchina (oltre ai retry interni di ENTER/settore).
+// La PAUSA è la parte importante: un tentativo fallito disconnette → il firmware
+// esce dall'OTA mode (abort-on-disconnect) e il BLE si assesta; ripartire subito
+// (come faceva l'800ms) ribeccava la macchina non pronta. Con la pausa, il
+// tentativo successivo riconnette pulito.
+const DEVICE_ATTEMPTS  = 3;      // tentativi per macchina
+const RETRY_PAUSE_MS   = 3500;   // recupero tra un tentativo e l'altro
+const INTER_DEVICE_MS  = 1500;   // pausa tra una macchina e la successiva
 
 // Tracking DB — stesso DB/protocollo della pagina cliente (upgrade.takeoff.pro).
 // Il token è lo stesso (già pubblico lato client): gate anti-spam, non dà
@@ -612,39 +620,55 @@ async function updateSequence(targetRows) {
   $('addBtn').disabled = true;
   rows.forEach(r => { r.retryBtn.disabled = true; });
 
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   let okCount = 0, failCount = 0;
   for (const row of targetRows) {
     const serial = row.device.name;
     const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
-    setState(row, 'connecting', '');
-    row.prog.style.width = '0%';
-    log(`▶ ${serial}: inizio`);
-    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     logEvent(serial, 'ota_started', { from_version: fromVer, to_version: firmwareVersion });
-    try {
-      await otaUpdateOne(row.device, pct => {
-        setState(row, 'flashing');
-        row.prog.style.width = pct.toFixed(1) + '%';
-      });
-      const dur = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0) / 1000);
-      row.prog.style.width = '100%';
-      setState(row, 'done', `Riavvio su ${firmwareVersion}…`);
-      log(`✅ ${serial}: completato in ${dur}s`);
-      // aggiorna il roster locale così il render riflette la nuova versione
-      dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
-      logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
+    log(`▶ ${serial}: inizio`);
+
+    let success = false, motors = false, lastErr = '';
+    for (let attempt = 1; attempt <= DEVICE_ATTEMPTS && !success && !motors; attempt++) {
+      setState(row, 'connecting', attempt > 1 ? `Tentativo ${attempt}/${DEVICE_ATTEMPTS}…` : '');
+      row.prog.style.width = '0%';
+      const t0 = nowMs();
+      try {
+        await otaUpdateOne(row.device, pct => {
+          setState(row, 'flashing');
+          row.prog.style.width = pct.toFixed(1) + '%';
+        });
+        const dur = Math.round((nowMs() - t0) / 1000);
+        row.prog.style.width = '100%';
+        setState(row, 'done', `Riavvio su ${firmwareVersion}…`);
+        log(`✅ ${serial}: completato in ${dur}s${attempt > 1 ? ` (tentativo ${attempt})` : ''}`);
+        dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
+        logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
+        success = true;
+      } catch (e) {
+        lastErr = e.message || String(e);
+        if (lastErr.includes('MOTORI')) { motors = true; setState(row, 'motors', lastErr); break; }
+        log(`  ✗ ${serial}: ${lastErr}${attempt < DEVICE_ATTEMPTS ? ' — ritento' : ''}`);
+        if (attempt < DEVICE_ATTEMPTS) {
+          // Recupero: lascia che la macchina esca dall'OTA mode e il BLE si
+          // assesti prima di riconnettere (è ciò che mancava al fleet).
+          setState(row, 'connecting', `Errore — ritento tra ${Math.round(RETRY_PAUSE_MS/1000)}s…`);
+          await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
+        }
+      }
+    }
+
+    if (success) {
       okCount++;
       bumpSessionDone();
       scheduleRemove(row);   // togli la completata dall'elenco attivo (resta nel registro DB)
-    } catch (e) {
-      const m = e.message || String(e);
-      if (m.includes('MOTORI')) setState(row, 'motors', m);
-      else setState(row, 'failed', m);
-      log(`❌ ${serial}: ${m}`);
-      logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: m });
+    } else {
+      if (!motors) setState(row, 'failed', lastErr || 'fallito');
+      log(`❌ ${serial}: ${lastErr || 'fallito'} (dopo ${DEVICE_ATTEMPTS} tentativi)`);
+      logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: lastErr });
       failCount++;
     }
-    await new Promise(r => setTimeout(r, 800)); // pausa tra una e l'altra
+    await new Promise(r => setTimeout(r, INTER_DEVICE_MS)); // pausa tra una macchina e l'altra
   }
 
   busy = false;
