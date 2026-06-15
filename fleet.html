@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.4.0</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.4.1</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -417,8 +417,33 @@ function setState(row, state, msg) {
   if (msg !== undefined) row.msg.textContent = msg;
   if (state === 'failed' || state === 'motors') {
     row.retryBtn.hidden = false; row.retryBtn.disabled = busy;
+    // "Riseleziona" solo sui veri errori (non per i motori accesi): ri-prende
+    // un handle BLE fresco dal selettore, come il flasher singolo.
+    row.reselectBtn.hidden = (state === 'motors'); row.reselectBtn.disabled = busy;
   } else {
     row.retryBtn.hidden = true;
+    row.reselectBtn.hidden = true;
+  }
+}
+
+// Ri-acquisisce il dispositivo dal selettore Bluetooth (handle FRESCO) e
+// riaggiorna. Rimedio per gli handle di getDevices() che si "incancreniscono":
+// è esattamente ciò che rende affidabile il flasher singolo (usa requestDevice).
+async function reselectDevice(row) {
+  if (busy) return;
+  try {
+    const d = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'wazlley' }],
+      optionalServices: [OTA_SERVICE_UUID],
+    });
+    rows.delete(row.device.id);
+    row.device = d;
+    rows.set(d.id, row);
+    row.nameEl.textContent = d.name || d.id;
+    log(`🔄 ${d.name}: riselezionata (handle fresco) — aggiorno`);
+    updateSequence([row]);
+  } catch (e) {
+    log(`(riselezione annullata: ${e.message || e})`);
   }
 }
 
@@ -441,7 +466,8 @@ function renderDevice(device, force) {
       <input type="checkbox" checked>
       <span class="device-name"></span>
       <span class="device-state"><span class="dot idle"></span><span class="lbl">In attesa</span>
-        <button class="ghost small retry" hidden>Riprova</button></span>
+        <button class="ghost small retry" hidden>Riprova</button>
+        <button class="ghost small reselect" hidden>🔄 Riseleziona</button></span>
     </div>
     <div class="device-prog"><div></div></div>
     <div class="device-msg"></div>`;
@@ -452,6 +478,7 @@ function renderDevice(device, force) {
     dot: el.querySelector('.dot'),
     stateLabel: el.querySelector('.lbl'),
     retryBtn: el.querySelector('.retry'),
+    reselectBtn: el.querySelector('.reselect'),
     prog: el.querySelector('.device-prog > div'),
     msg: el.querySelector('.device-msg'),
     state: 'idle',
@@ -466,6 +493,7 @@ function renderDevice(device, force) {
     if (upToDate) row.chk.checked = false;
   }
   row.retryBtn.addEventListener('click', () => updateSequence([row]));
+  row.reselectBtn.addEventListener('click', () => reselectDevice(row));
   rows.set(device.id, row);
   $('deviceList').appendChild(el);
   return row;
@@ -618,7 +646,7 @@ async function updateSequence(targetRows) {
   busy = true;
   $('updateAllBtn').disabled = true;
   $('addBtn').disabled = true;
-  rows.forEach(r => { r.retryBtn.disabled = true; });
+  rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
 
   const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   let okCount = 0, failCount = 0;
@@ -674,7 +702,9 @@ async function updateSequence(targetRows) {
   busy = false;
   $('updateAllBtn').disabled = false;
   $('addBtn').disabled = false;
-  rows.forEach(r => { if (r.state==='failed'||r.state==='motors') r.retryBtn.disabled = false; });
+  rows.forEach(r => {
+    if (r.state==='failed'||r.state==='motors') { r.retryBtn.disabled = false; r.reselectBtn.disabled = false; }
+  });
   renderFleetViews();   // aggiorna riepilogo + registro con le nuove versioni
   log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
 }
