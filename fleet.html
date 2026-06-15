@@ -32,6 +32,11 @@
   button.ghost { background:var(--row); color:var(--text); border:1px solid var(--border); }
   button.small { padding:7px 12px; font-size:13px; }
   button:disabled { opacity:.4; cursor:not-allowed; }
+  .modebar { display:flex; align-items:center; gap:8px; margin:14px 0 2px; flex-wrap:wrap; }
+  .modelabel { font-size:13px; color:var(--muted); }
+  .modebtn { padding:7px 14px; font-size:13px; font-weight:700; border-radius:8px;
+    background:var(--row); color:var(--muted); border:1px solid var(--border); }
+  .modebtn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
   .device {
     background:var(--row); border:1px solid var(--border); border-radius:12px;
     padding:14px 16px; margin-bottom:10px;
@@ -89,7 +94,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.2</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.0</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -101,12 +106,23 @@
     <span class="value" id="targetVer">…</span>
   </div>
 
+  <div class="target">
+    <span class="label">Display .tft (auto square/round)</span>
+    <span class="value" id="targetTft" style="font-size:15px;">…</span>
+  </div>
+
   <div id="summary" class="summary"></div>
 
   <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span>
       <span id="sessionDone" style="color:var(--ok); font-weight:700;"></span></h2>
+  <div class="modebar" id="modeBar">
+    <span class="modelabel">Aggiorna:</span>
+    <button class="modebtn active" data-mode="firmware">Firmware</button>
+    <button class="modebtn" data-mode="display">Display</button>
+    <button class="modebtn" data-mode="both">Entrambi</button>
+  </div>
   <div class="bar">
-    <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
+    <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware</button>
     <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
     <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
     <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
@@ -160,6 +176,16 @@ const IS_ANDROID       = /android/i.test(navigator.userAgent);
 const DEVICE_ATTEMPTS  = 3;      // tentativi per macchina
 const RETRY_PAUSE_MS   = 3500;   // recupero tra un tentativo e l'altro
 const INTER_DEVICE_MS  = 1500;   // pausa tra una macchina e la successiva
+const AFTER_FW_REBOOT_MS = 7000; // 'Entrambi': attesa riavvio dopo firmware, prima del display
+
+// NEXTION display via BLE passthrough (stessa service/char dell'OTA).
+const TFT_SQUARE_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusSquare.tft';
+const TFT_CIRCLE_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusRounded.tft';
+const NBLE_CHUNK_SIZE  = 4096;   // chunk logico Nextion (whmi-wris)
+const NBLE_BLE_WRITE   = 200;    // payload write-without-response (conservativo)
+const NBLE_ACK_TIMEOUT = 15000;  // ms — l'ACK Nextion può essere lento durante l'erase
+
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // Tracking DB — stesso DB/protocollo della pagina cliente (upgrade.takeoff.pro).
 // Il token è lo stesso (già pubblico lato client): gate anti-spam, non dà
@@ -172,6 +198,9 @@ const API_TOKEN = '3350d8db9b4a2edcb5034d29a3ee36b90ffa1da28c2c59b7b2d712f5285e9
 // =====================================================================
 let firmwareBytes = null;
 let firmwareVersion = null;
+let tftSquare = null;        // { data, size, name, version }
+let tftCircle = null;
+let fleetMode = 'firmware';  // 'firmware' | 'display' | 'both'
 let busy = false;
 const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
 const dbRoster = new Map();  // serial -> { serial, current_firmware, last_seen_at, notes }
@@ -255,6 +284,28 @@ async function downloadFirmware() {
   firmwareVersion = extractVersion(firmwareBytes) || '(sconosciuta)';
   $('targetVer').textContent = `${firmwareVersion} · ${(firmwareBytes.length/1024).toFixed(0)} KB`;
   log(`Firmware caricato: ${firmwareVersion} (${firmwareBytes.length} byte)`);
+}
+
+// Versione del .tft: marker ASCII "TFT_V<n>" messo a design-time nel progetto Nextion.
+function extractTftVersion(uint8) {
+  const text = new TextDecoder('iso-8859-1').decode(uint8);
+  const m = text.match(/TFT_V(\d+)/);
+  return m ? ('V' + m[1]) : '?';
+}
+async function downloadTfts() {
+  try {
+    const [sq, ci] = await Promise.all([
+      fetch(`${TFT_SQUARE_URL}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error(`square HTTP ${r.status}`); return r.arrayBuffer(); }),
+      fetch(`${TFT_CIRCLE_URL}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error(`round HTTP ${r.status}`); return r.arrayBuffer(); }),
+    ]);
+    tftSquare = { data:new Uint8Array(sq), size:sq.byteLength, name:'canBusSquare.tft',  version:extractTftVersion(new Uint8Array(sq)) };
+    tftCircle = { data:new Uint8Array(ci), size:ci.byteLength, name:'canBusRounded.tft', version:extractTftVersion(new Uint8Array(ci)) };
+    $('targetTft').textContent = `square ${tftSquare.version} · round ${tftCircle.version}`;
+    log(`Display .tft: square ${tftSquare.version}, round ${tftCircle.version}`);
+  } catch (e) {
+    log(`(.tft display non caricati: ${e.message || e})`);
+    $('targetTft').textContent = 'non disponibili';
+  }
 }
 
 // =====================================================================
@@ -421,6 +472,199 @@ async function otaUpdateOne(device, onProgress) {
     // Disconnetti solo se ancora connesso (percorso d'errore: il device NON si
     // è riavviato). Su successo è già caduto da solo dopo il reboot, quindi qui
     // non tocchiamo nulla e non innescriamo l'abort dell'OTA.
+    try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
+  }
+}
+
+// =====================================================================
+// NEXTION display via BLE passthrough — portato dal flasher singolo
+// (protocollo collaudato). Stessa service/char dell'OTA. Differenze dal
+// firmware OTA: l'ESP NON si riavvia (riavvia solo il display), quindi a
+// fine upload ci disconnettiamo noi; e il modello (square/round) è
+// AUTO-RILEVATO dalla risposta "comok" → si manda il .tft giusto.
+// Stato canale (batch sequenziale: una macchina alla volta).
+// =====================================================================
+let fnble = { char:null, rxBuf:new Uint8Array(0), rxWaiters:[], cmdWaiters:[] };
+
+function fnbleOnNotify(ev) {
+  const v = new Uint8Array(ev.target.value.buffer);
+  if (v.length >= 4 && v[0] === 0xFE && v[1] === 0x12) {          // FE 12 <len> <data> wrapper UART
+    const declaredLen = v[2] | (v[3] << 8);
+    const useLen = Math.min(declaredLen, v.length - 4);
+    const payload = v.slice(4, 4 + useLen);
+    const merged = new Uint8Array(fnble.rxBuf.length + payload.length);
+    merged.set(fnble.rxBuf, 0); merged.set(payload, fnble.rxBuf.length);
+    fnble.rxBuf = merged;
+    if (fnble.rxWaiters.length) fnble.rxWaiters.shift()(fnble.rxBuf);
+    return;
+  }
+  if (v.length >= 3 && v[0] === 0xFE && v[1] === 0xE0) {          // FE E0 <err> error frame
+    if (fnble.cmdWaiters.length) fnble.cmdWaiters.shift()(v);
+    return;
+  }
+  if (v.length >= 2 && v[0] === 0xFE && v[1] !== 0x12) {          // FE <cmd> <status> ACK
+    if (fnble.cmdWaiters.length) fnble.cmdWaiters.shift()(v);
+    return;
+  }
+}
+function fnbleWaitForData(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let waiter;
+    const t = setTimeout(() => { const i = fnble.rxWaiters.indexOf(waiter); if (i>=0) fnble.rxWaiters.splice(i,1); reject(new Error('timeout')); }, timeoutMs);
+    waiter = v => { clearTimeout(t); resolve(v); };
+    fnble.rxWaiters.push(waiter);
+  });
+}
+async function fnbleWaitForByte(target, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const idx = fnble.rxBuf.indexOf(target);
+    if (idx >= 0) { const c = fnble.rxBuf.slice(0, idx+1); fnble.rxBuf = fnble.rxBuf.slice(idx+1); return c; }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`timeout 0x${target.toString(16)}`);
+    try { await fnbleWaitForData(remaining); } catch { throw new Error(`timeout 0x${target.toString(16)}`); }
+  }
+}
+function fnbleWaitForAck(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let waiter;
+    const t = setTimeout(() => { const i = fnble.cmdWaiters.indexOf(waiter); if (i>=0) fnble.cmdWaiters.splice(i,1); reject(new Error('ACK timeout')); }, timeoutMs);
+    waiter = v => { clearTimeout(t); resolve(v); };
+    fnble.cmdWaiters.push(waiter);
+  });
+}
+async function fnbleWrite(bytes, withResponse) {
+  const buf = (bytes instanceof Uint8Array) ? bytes : Uint8Array.from(bytes);
+  if (withResponse) await fnble.char.writeValueWithResponse(buf);
+  else if (fnble.char.writeValueWithoutResponse) await fnble.char.writeValueWithoutResponse(buf);
+  else await fnble.char.writeValue(buf);
+}
+async function fnbleSendCmd(cmdBytes, timeoutMs = 5000) {
+  const p = fnbleWaitForAck(timeoutMs);
+  await fnbleWrite(cmdBytes, true);
+  return p;
+}
+// Inoltra byte grezzi al display. Spezza ogni write che inizierebbe con 0xFE
+// (1 byte di FE da solo bypassa il check FE+cmd del firmware), e cede un
+// microtask ogni 4 write per non saturare la coda BLE di Chrome.
+async function fnbleForwardRaw(bytes) {
+  let off = 0, writesSinceYield = 0;
+  while (off < bytes.length) {
+    const end = Math.min(off + NBLE_BLE_WRITE, bytes.length);
+    let chunk = bytes.slice(off, end);
+    if (chunk.length >= 2 && chunk[0] === 0xFE) { await fnbleWrite(chunk.slice(0,1), false); chunk = chunk.slice(1); writesSinceYield++; }
+    await fnbleWrite(chunk, false);
+    writesSinceYield++; off = end;
+    if (writesSinceYield >= 4) { await new Promise(r => setTimeout(r, 0)); writesSinceYield = 0; }
+  }
+}
+
+async function nextionUpdateOne(device, onProgress) {
+  // --- connessione (identica a otaUpdateOne, incl. wake handle freddo) ---
+  if (!device.gatt.connected && typeof device.watchAdvertisements === 'function') {
+    try {
+      const ac = new AbortController();
+      const seen = new Promise(res => {
+        const onAdv = () => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(true); };
+        device.addEventListener('advertisementreceived', onAdv);
+        setTimeout(() => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(false); }, 6000);
+      });
+      await device.watchAdvertisements({ signal: ac.signal });
+      await seen;
+      try { ac.abort(); } catch(e){}
+    } catch (e) { /* non supportato → connetti comunque */ }
+  }
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(OTA_SERVICE_UUID);
+  const char = await svc.getCharacteristic(OTA_CHAR_UUID);
+  fnble = { char, rxBuf:new Uint8Array(0), rxWaiters:[], cmdWaiters:[] };
+  await char.startNotifications();
+  char.addEventListener('characteristicvaluechanged', fnbleOnNotify);
+  await new Promise(r => setTimeout(r, IS_ANDROID ? 1200 : 300));
+
+  const enc = new TextEncoder();
+  try {
+    onProgress(1, 'passthrough…');
+    // 1) ENTER PASSTHROUGH (FE 03) → ACK FE 03 00
+    const ack1 = await fnbleSendCmd([0xFE, 0x03], 5000);
+    if (!(ack1.length >= 3 && ack1[0]===0xFE && ack1[1]===0x03 && ack1[2]===0x00)) throw new Error('passthrough non ACKato');
+
+    // 2) UART 115200 + "connect"
+    const baud = 115200;
+    const a = await fnbleSendCmd([0xFE,0x07, baud&0xFF,(baud>>8)&0xFF,(baud>>16)&0xFF,(baud>>24)&0xFF], 3000);
+    if (!(a && a[1]===0x07 && a[2]===0x00)) throw new Error('baud non ACKato');
+    fnble.rxBuf = new Uint8Array(0);
+    const conn = new Uint8Array(10); conn.set(enc.encode('connect'), 0); conn[7]=0xFF; conn[8]=0xFF; conn[9]=0xFF;
+    await fnbleForwardRaw(conn);
+
+    // 3) attendi "comok…" e rileva il modello
+    let comok = '';
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      while (fnble.rxBuf.length && fnble.rxBuf[0] === 0xFF) fnble.rxBuf = fnble.rxBuf.slice(1);
+      const ff = fnble.rxBuf.indexOf(0xFF);
+      if (ff >= 0) { const cb = fnble.rxBuf.slice(0, ff+1); fnble.rxBuf = fnble.rxBuf.slice(ff+1); comok = new TextDecoder().decode(cb).replace(/[\xff\x00]/g,'').trim(); break; }
+      try { await fnbleWaitForData(Math.max(50, deadline - Date.now())); } catch { break; }
+    }
+    if (!comok.startsWith('comok')) throw new Error('display non risponde (comok)');
+
+    let detectedFw = null, model = null;
+    const parts = comok.split(',');
+    const mPart = parts.find(p => /^NX/i.test(p.trim()));
+    if (mPart) {
+      const mu = mPart.trim().toUpperCase();
+      if (mu.includes('NX4827')) model = 'square';        // 4.3" square
+      else if (mu.includes('NX4848')) model = 'circle';   // 2.8" round
+      const v = parseInt(parts[parts.indexOf(mPart) + 1], 10); if (!isNaN(v)) detectedFw = v;
+    }
+    if (!model) throw new Error(`modello display non riconosciuto (${comok})`);
+    const tft = (model === 'square') ? tftSquare : tftCircle;
+    if (!tft) throw new Error(`.tft ${model} non caricato`);
+    log(`  ${device.name}: display ${model} → ${tft.name} ${tft.version}`);
+    fnble.rxBuf = new Uint8Array(0);
+
+    // 4) whmi-wris <filesize>,<baud>,<flag>
+    const uploadFlag = (typeof detectedFw === 'number' && detectedFw < 250) ? 0 : 1;
+    await fnbleForwardRaw(enc.encode(`whmi-wris ${tft.size},${baud},${uploadFlag}`));
+    await fnbleForwardRaw(new Uint8Array([0xFF,0xFF,0xFF]));
+
+    // 5) attendi il primo 0x05 (display pronto)
+    await fnbleWaitForByte(0x05, 15000);
+    fnble.rxBuf = new Uint8Array(0);
+    onProgress(5, 'display…');
+
+    // 6) streaming a chunk da 4KB, guidato dai frame 0x05 / 0x08
+    const data = tft.data, fileSize = tft.size;
+    let filePos = 0, chunksSent = 0;
+    { const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length); await fnbleForwardRaw(data.slice(filePos, end)); filePos = end; chunksSent++; }
+    while (filePos < fileSize) {
+      const tFrame = Date.now(); let frameByte = -1, off = 0;
+      while (Date.now() - tFrame < NBLE_ACK_TIMEOUT) {
+        if (fnble.rxBuf.length >= 1) {
+          if (fnble.rxBuf[0] === 0x05) { frameByte = 0x05; fnble.rxBuf = fnble.rxBuf.slice(1); break; }
+          else if (fnble.rxBuf[0] === 0x08 && fnble.rxBuf.length >= 5) {
+            off = (fnble.rxBuf[1] | (fnble.rxBuf[2]<<8) | (fnble.rxBuf[3]<<16) | (fnble.rxBuf[4]<<24)) >>> 0;
+            frameByte = 0x08; fnble.rxBuf = fnble.rxBuf.slice(5); break;
+          } else if (fnble.rxBuf[0] !== 0x05 && fnble.rxBuf[0] !== 0x08) { fnble.rxBuf = fnble.rxBuf.slice(1); }
+        }
+        try { await fnbleWaitForData(500); } catch { /* continua a pollare fino al timeout esterno */ }
+      }
+      if (frameByte < 0) throw new Error(`display non risponde dopo chunk ${chunksSent}`);
+      if (frameByte === 0x08) { if (off >= fileSize) { filePos = fileSize; break; } if (off > 0) filePos = off; }
+      const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
+      await fnbleForwardRaw(data.slice(filePos, end));
+      filePos = end; chunksSent++;
+      onProgress(5 + (filePos / fileSize) * 90, 'display…');
+    }
+    onProgress(96, 'display…');
+
+    // 7) finestra di sniff post-upload, poi 8) exit passthrough (best-effort)
+    await new Promise(r => setTimeout(r, 2500));
+    try { await fnbleSendCmd([0xFE, 0x00], 1500); } catch { /* il display può aver già riavviato */ }
+    onProgress(100, 'display ok');
+  } finally {
+    try { char.removeEventListener('characteristicvaluechanged', fnbleOnNotify); } catch(e){}
+    // L'ESP NON si riavvia dopo l'update display → disconnetti tu.
     try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
   }
 }
@@ -663,59 +907,84 @@ $('refreshBtn').addEventListener('click', refreshDevices);
 // =====================================================================
 // Update sequenziale
 // =====================================================================
+// Esegue UN job ('firmware' o 'nextion') su una macchina, coi retry/pausa
+// collaudati. Ritorna { success, motors, lastErr }.
+async function runDeviceJob(row, kind) {
+  const serial = row.device.name;
+  const isFw = (kind === 'firmware');
+  const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
+  logEvent(serial, isFw ? 'ota_started' : 'nextion_started', isFw ? { from_version: fromVer, to_version: firmwareVersion } : {});
+  log(`▶ ${serial}: ${isFw ? 'firmware' : 'display'} — inizio`);
+
+  let success = false, motors = false, lastErr = '';
+  for (let attempt = 1; attempt <= DEVICE_ATTEMPTS && !success && !motors; attempt++) {
+    setState(row, 'connecting', attempt > 1 ? `Tentativo ${attempt}/${DEVICE_ATTEMPTS}…` : '');
+    row.prog.style.width = '0%';
+    const t0 = nowMs();
+    try {
+      if (isFw) {
+        await otaUpdateOne(row.device, pct => { setState(row, 'flashing'); row.prog.style.width = pct.toFixed(1) + '%'; });
+      } else {
+        await nextionUpdateOne(row.device, (pct, note) => { setState(row, 'flashing', note || 'display…'); row.prog.style.width = pct.toFixed(1) + '%'; });
+      }
+      const dur = Math.round((nowMs() - t0) / 1000);
+      row.prog.style.width = '100%';
+      setState(row, 'done', isFw ? `Riavvio su ${firmwareVersion}…` : 'Display aggiornato');
+      log(`✅ ${serial}: ${isFw ? 'firmware' : 'display'} completato in ${dur}s${attempt > 1 ? ` (tentativo ${attempt})` : ''}`);
+      if (isFw) dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
+      logEvent(serial, isFw ? 'ota_completed' : 'nextion_completed', isFw ? { from_version: fromVer, to_version: firmwareVersion, duration_s: dur } : { duration_s: dur });
+      success = true;
+    } catch (e) {
+      lastErr = e.message || String(e);
+      if (lastErr.includes('MOTORI')) { motors = true; setState(row, 'motors', lastErr); break; }
+      log(`  ✗ ${serial}: ${lastErr}${attempt < DEVICE_ATTEMPTS ? ' — ritento' : ''}`);
+      if (attempt < DEVICE_ATTEMPTS) {
+        // Recupero: lascia che la macchina esca dall'OTA mode e il BLE si
+        // assesti prima di riconnettere (è ciò che mancava al fleet).
+        setState(row, 'connecting', `Errore — ritento tra ${Math.round(RETRY_PAUSE_MS/1000)}s…`);
+        await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
+      }
+    }
+  }
+  if (!success && !motors) logEvent(serial, isFw ? 'ota_failed' : 'nextion_failed', { error: lastErr });
+  return { success, motors, lastErr };
+}
+
 async function updateSequence(targetRows) {
-  if (busy || !firmwareBytes) return;
+  const needFw  = (fleetMode === 'firmware' || fleetMode === 'both');
+  const needTft = (fleetMode === 'display'  || fleetMode === 'both');
+  if (busy) return;
+  if (needFw && !firmwareBytes) return;
+  if (needTft && !(tftSquare && tftCircle)) {
+    $('selMsg').textContent = '⚠ I .tft del display non sono caricati. Ricarica la pagina.';
+    return;
+  }
   busy = true;
   $('updateAllBtn').disabled = true;
   $('addBtn').disabled = true;
   rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
 
-  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   let okCount = 0, failCount = 0;
   for (const row of targetRows) {
-    const serial = row.device.name;
-    const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
-    logEvent(serial, 'ota_started', { from_version: fromVer, to_version: firmwareVersion });
-    log(`▶ ${serial}: inizio`);
-
-    let success = false, motors = false, lastErr = '';
-    for (let attempt = 1; attempt <= DEVICE_ATTEMPTS && !success && !motors; attempt++) {
-      setState(row, 'connecting', attempt > 1 ? `Tentativo ${attempt}/${DEVICE_ATTEMPTS}…` : '');
-      row.prog.style.width = '0%';
-      const t0 = nowMs();
-      try {
-        await otaUpdateOne(row.device, pct => {
-          setState(row, 'flashing');
-          row.prog.style.width = pct.toFixed(1) + '%';
-        });
-        const dur = Math.round((nowMs() - t0) / 1000);
-        row.prog.style.width = '100%';
-        setState(row, 'done', `Riavvio su ${firmwareVersion}…`);
-        log(`✅ ${serial}: completato in ${dur}s${attempt > 1 ? ` (tentativo ${attempt})` : ''}`);
-        dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
-        logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
-        success = true;
-      } catch (e) {
-        lastErr = e.message || String(e);
-        if (lastErr.includes('MOTORI')) { motors = true; setState(row, 'motors', lastErr); break; }
-        log(`  ✗ ${serial}: ${lastErr}${attempt < DEVICE_ATTEMPTS ? ' — ritento' : ''}`);
-        if (attempt < DEVICE_ATTEMPTS) {
-          // Recupero: lascia che la macchina esca dall'OTA mode e il BLE si
-          // assesti prima di riconnettere (è ciò che mancava al fleet).
-          setState(row, 'connecting', `Errore — ritento tra ${Math.round(RETRY_PAUSE_MS/1000)}s…`);
-          await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
-        }
+    let res = { success: true, motors: false, lastErr: '' };
+    if (needFw) res = await runDeviceJob(row, 'firmware');
+    if (res.success && !res.motors && needTft) {
+      if (needFw) {
+        // appena flashato il firmware la macchina si riavvia: dalle tempo di
+        // tornare sul bus e ripubblicare prima di riconnettere per il display.
+        setState(row, 'connecting', 'Riavvio dopo firmware…');
+        await new Promise(r => setTimeout(r, AFTER_FW_REBOOT_MS));
       }
+      res = await runDeviceJob(row, 'nextion');
     }
 
-    if (success) {
+    if (res.success) {
       okCount++;
       bumpSessionDone();
       scheduleRemove(row);   // togli la completata dall'elenco attivo (resta nel registro DB)
     } else {
-      if (!motors) setState(row, 'failed', lastErr || 'fallito');
-      log(`❌ ${serial}: ${lastErr || 'fallito'} (dopo ${DEVICE_ATTEMPTS} tentativi)`);
-      logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: lastErr });
+      if (!res.motors) setState(row, 'failed', res.lastErr || 'fallito');
+      log(`❌ ${row.device.name}: ${res.lastErr || 'fallito'} (dopo ${DEVICE_ATTEMPTS} tentativi)`);
       failCount++;
     }
     await new Promise(r => setTimeout(r, INTER_DEVICE_MS)); // pausa tra una macchina e l'altra
@@ -744,6 +1013,16 @@ $('deselectAllBtn').addEventListener('click', () => {
   $('selMsg').textContent = 'Nessuna selezionata — scegli quelle da aggiornare.';
 });
 
+// Toggle modalità: Firmware / Display / Entrambi
+document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', () => {
+  if (busy) return;
+  fleetMode = b.dataset.mode;
+  document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
+  $('updateAllBtn').textContent =
+    fleetMode === 'firmware' ? 'Aggiorna firmware' :
+    fleetMode === 'display'  ? 'Aggiorna display'  : 'Aggiorna firmware + display';
+}));
+
 $('updateAllBtn').addEventListener('click', () => {
   const selected = [...rows.values()].filter(r => r.chk.checked && r.state !== 'done');
   if (!selected.length) {
@@ -766,6 +1045,7 @@ $('updateAllBtn').addEventListener('click', () => {
   }
   checkLatest();             // "sto usando l'ultima versione della pagina?"
   try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
+  downloadTfts();            // .tft display in background (per modalità Display/Entrambi)
   await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();
   renderFleetViews();
