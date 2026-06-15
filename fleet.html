@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.0</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.1</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -108,6 +108,7 @@
   <div class="bar">
     <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
     <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
+    <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
     <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
     <button class="ghost" id="refreshBtn">↻ Ricarica</button>
   </div>
@@ -463,7 +464,7 @@ function renderDevice(device, force) {
   el.className = 'device';
   el.innerHTML = `
     <div class="device-head">
-      <input type="checkbox" checked>
+      <input type="checkbox">
       <span class="device-name"></span>
       <span class="device-state"><span class="dot idle"></span><span class="lbl">In attesa</span>
         <button class="ghost small retry" hidden>Riprova</button>
@@ -490,8 +491,10 @@ function renderDevice(device, force) {
   if (known && known.current_firmware) {
     const upToDate = known.current_firmware === firmwareVersion;
     row.msg.textContent = `Installato: ${known.current_firmware}${upToDate ? ' · già aggiornato ✓' : ''}`;
-    if (upToDate) row.chk.checked = false;
   }
+  // V0.6.1 — di default NON pre-selezionata (scegli tu / "Seleziona tutte"),
+  // tranne quando l'hai aggiunta a mano col pairing: lì l'hai messa per farla.
+  if (force) row.chk.checked = true;
   row.retryBtn.addEventListener('click', () => updateSequence([row]));
   row.reselectBtn.addEventListener('click', () => reselectDevice(row));
   rows.set(device.id, row);
@@ -715,6 +718,11 @@ $('selectAllBtn').addEventListener('click', () => {
   let n = 0;
   rows.forEach(r => { if (r.state !== 'done') { r.chk.checked = true; n++; } });
   $('selMsg').textContent = n ? `${n} macchine selezionate.` : '';
+});
+
+$('deselectAllBtn').addEventListener('click', () => {
+  rows.forEach(r => { r.chk.checked = false; });
+  $('selMsg').textContent = 'Nessuna selezionata — scegli quelle da aggiornare.';
 });
 
 $('updateAllBtn').addEventListener('click', () => {
