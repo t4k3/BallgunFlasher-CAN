@@ -94,7 +94,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.0</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.1</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -176,7 +176,7 @@ const IS_ANDROID       = /android/i.test(navigator.userAgent);
 const DEVICE_ATTEMPTS  = 3;      // tentativi per macchina
 const RETRY_PAUSE_MS   = 3500;   // recupero tra un tentativo e l'altro
 const INTER_DEVICE_MS  = 1500;   // pausa tra una macchina e la successiva
-const AFTER_FW_REBOOT_MS = 7000; // 'Entrambi': attesa riavvio dopo firmware, prima del display
+const AFTER_FW_REBOOT_MS = 11000; // 'Entrambi': attesa riavvio dopo firmware, prima del display
 
 // NEXTION display via BLE passthrough (stessa service/char dell'OTA).
 const TFT_SQUARE_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusSquare.tft';
