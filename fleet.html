@@ -22,18 +22,19 @@
     padding:14px 16px; margin:18px 0; display:flex; align-items:baseline; justify-content:space-between; }
   .target .label { font-size:13px; color:var(--muted); }
   .target .value { font-size:20px; font-weight:700; color:var(--accent); }
+  .bar { display:flex; gap:10px; margin:16px 0; flex-wrap:wrap; }
   button {
-    padding:14px 18px; font-size:16px; font-weight:700; border:none; border-radius:12px;
+    padding:12px 18px; font-size:15px; font-weight:700; border:none; border-radius:10px;
     cursor:pointer; transition:background .15s ease, opacity .15s ease;
   }
-  button.primary { background:var(--accent); color:#fff; }
+  button.primary { background:var(--accent); color:#fff; flex:1; min-width:180px; }
   button.primary:hover:not(:disabled) { background:var(--accent-dark); }
   button.ghost { background:var(--row); color:var(--text); border:1px solid var(--border); }
   button.small { padding:7px 12px; font-size:13px; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
   .device {
     background:var(--row); border:1px solid var(--border); border-radius:12px;
-    padding:14px 16px; margin-top:12px;
+    padding:14px 16px; margin-bottom:10px;
   }
   .device-head { display:flex; align-items:center; gap:12px; }
   .device-name { font-weight:700; font-size:15px; font-variant-numeric:tabular-nums; }
@@ -48,6 +49,8 @@
   .device-prog { height:8px; background:#10101a; border-radius:5px; overflow:hidden; margin-top:10px; }
   .device-prog > div { height:100%; width:0%; background:var(--accent); transition:width .2s ease; }
   .device-msg { font-size:12px; color:var(--muted); margin-top:6px; min-height:14px; }
+  .device input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); }
+  .empty { color:var(--muted); font-size:14px; text-align:center; padding:26px 0; }
   .warnbox { background:#2a1a0a; border:1px solid #6b3a1a; color:#f5c98b;
     padding:12px 14px; border-radius:10px; font-size:13px; margin-bottom:16px; line-height:1.5; }
   details { margin-top:18px; font-size:13px; color:var(--muted); }
@@ -55,7 +58,7 @@
   pre.log { background:#0a0a10; color:#c8c9d0; padding:12px; border-radius:8px;
     max-height:260px; overflow:auto; font-size:11px;
     font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; margin:8px 0 0; }
-  footer { color:var(--muted); font-size:12px; margin-top:26px; text-align:center; line-height:1.6; }
+  footer { color:var(--muted); font-size:12px; margin-top:26px; text-align:center; }
   a { color:var(--accent); }
   /* riepilogo + registro compatto (scala a centinaia di macchine) */
   .summary { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 6px; }
@@ -65,7 +68,7 @@
   .chip.ok b { color:var(--ok); }  .chip.old b { color:var(--warn); }
   h2.sec { font-size:13px; text-transform:uppercase; letter-spacing:.04em;
            color:var(--muted); margin:22px 0 8px; font-weight:700; }
-  h2.sec .hint { text-transform:none; letter-spacing:0; font-weight:400; font-size:12px; display:block; margin-top:3px; }
+  h2.sec .hint { text-transform:none; letter-spacing:0; font-weight:400; font-size:12px; }
   .regtools { display:flex; gap:10px; align-items:center; margin:8px 0; flex-wrap:wrap; }
   #search { flex:1; min-width:160px; padding:9px 12px; background:#10101a;
             border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; }
@@ -78,7 +81,7 @@
   .reg-row .rdot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--muted); }
   .reg-row .rdot.ok { background:var(--ok); }  .reg-row .rdot.old { background:var(--warn); }
   .reg-row .rs { font-weight:700; font-variant-numeric:tabular-nums; }
-  .reg-row .rg { font-size:11px; color:var(--ok); }
+  .reg-row .rg { font-size:11px; color:var(--accent); }
   .reg-row .rv { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
 </style>
 </head>
@@ -86,9 +89,9 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.5.0</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.0</span>
         <span class="ver" id="verCheck"></span></h1>
-    <p class="subtitle">Aggiornamento OTA degli sparapalloni · ESP32-C6 · uso interno</p>
+    <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
 
   <div id="warnBox" class="warnbox" hidden></div>
@@ -100,15 +103,20 @@
 
   <div id="summary" class="summary"></div>
 
-  <h2 class="sec">Aggiorna
-    <span class="hint">una macchina alla volta: scegli dal selettore Bluetooth quella davanti a te → handle sempre fresco = affidabile.</span>
-  </h2>
-  <button class="primary" id="pickBtn" style="width:100%;" disabled>🔵 Aggiorna una macchina</button>
-  <div id="active"></div>
-  <div id="sessionMsg" class="device-msg" style="color:var(--ok); margin-top:10px;"></div>
+  <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span>
+      <span id="sessionDone" style="color:var(--ok); font-weight:700;"></span></h2>
+  <div class="bar">
+    <button class="primary" id="updateAllBtn" disabled>Aggiorna selezionati</button>
+    <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
+    <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
+    <button class="ghost" id="refreshBtn">↻ Ricarica</button>
+  </div>
+  <div id="selMsg" class="device-msg" style="margin:-8px 0 8px; color:var(--warn);"></div>
+  <div id="deviceList"></div>
+  <div id="hiddenDoneNote" class="device-msg" style="color:var(--ok);"></div>
 
-  <details class="registry" open>
-    <summary>Registro fleet (<span id="regCount">0</span>) — stato di tutte le macchine</summary>
+  <details class="registry">
+    <summary>Registro fleet completo (<span id="regCount">0</span>)</summary>
     <div class="regtools">
       <input id="search" type="text" placeholder="🔍 cerca seriale o versione…">
       <label><input type="checkbox" id="onlyOld"> solo da aggiornare</label>
@@ -123,8 +131,7 @@
 
   <footer>
     Ballgun Fleet · solo uso interno t4k3 · Chrome/Edge desktop o Chrome Android (no iOS).<br>
-    Lo "storico" delle macchine sta nel DB; il Bluetooth NON viene ricordato (ogni
-    aggiornamento usa un handle fresco — niente flag Chrome, niente handle stantii).
+    Le macchine devono essere accese e in raggio Bluetooth. Aggiornamento <b>sequenziale</b>.
   </footer>
 </div>
 
@@ -144,13 +151,18 @@ const OTA_MAX_RETRIES  = 5;      // per-sector retries
 const ENTER_TIMEOUT    = 7000;   // ENTER-OTA per-attempt timeout
 const ENTER_RETRIES    = 3;
 const IS_ANDROID       = /android/i.test(navigator.userAgent);
-// Retry automatico per-macchina (oltre ai retry interni di ENTER/settore), con
-// pausa di recupero: un tentativo fallito disconnette → il firmware esce
-// dall'OTA mode e il BLE si assesta prima del tentativo successivo.
-const DEVICE_ATTEMPTS  = 3;
-const RETRY_PAUSE_MS   = 3500;
+// Retry automatico per-macchina (oltre ai retry interni di ENTER/settore).
+// La PAUSA è la parte importante: un tentativo fallito disconnette → il firmware
+// esce dall'OTA mode (abort-on-disconnect) e il BLE si assesta; ripartire subito
+// (come faceva l'800ms) ribeccava la macchina non pronta. Con la pausa, il
+// tentativo successivo riconnette pulito.
+const DEVICE_ATTEMPTS  = 3;      // tentativi per macchina
+const RETRY_PAUSE_MS   = 3500;   // recupero tra un tentativo e l'altro
+const INTER_DEVICE_MS  = 1500;   // pausa tra una macchina e la successiva
 
 // Tracking DB — stesso DB/protocollo della pagina cliente (upgrade.takeoff.pro).
+// Il token è lo stesso (già pubblico lato client): gate anti-spam, non dà
+// accesso al DB né alla dashboard (password separate in config.php).
 const API_BASE  = 'https://upgrade.takeoff.pro/api';
 const API_TOKEN = '3350d8db9b4a2edcb5034d29a3ee36b90ffa1da28c2c59b7b2d712f5285e933f';
 
@@ -160,16 +172,14 @@ const API_TOKEN = '3350d8db9b4a2edcb5034d29a3ee36b90ffa1da28c2c59b7b2d712f5285e9
 let firmwareBytes = null;
 let firmwareVersion = null;
 let busy = false;
-const dbRoster = new Map();   // serial -> { serial, current_firmware, last_seen_at, notes }
-let sessionDone = 0;
-const sessionSerials = [];
+const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
+const dbRoster = new Map();  // serial -> { serial, current_firmware, last_seen_at, notes }
+let hiddenDone = [];         // device già su target al caricamento (fuori dall'elenco attivo)
 
 // =====================================================================
 // UI helpers
 // =====================================================================
 const $ = id => document.getElementById(id);
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 function log(msg) {
   const t = new Date().toLocaleTimeString();
   $('log').textContent += `[${t}] ${msg}\n`;
@@ -177,24 +187,29 @@ function log(msg) {
 }
 function showWarn(html) { const w = $('warnBox'); w.innerHTML = html; w.hidden = false; }
 
-// Controllo "sto usando l'ultima versione?": confronta #pageVer con version.json.
+// Controllo "sto usando l'ultima versione?": confronta la versione di QUESTA
+// pagina (#pageVer) con version.json pubblicato. Verde = ok, giallo = ricarica.
 async function checkLatest() {
   const mine = ($('pageVer').textContent || '').replace(/^v/i, '').trim();
   try {
     const res = await fetch('https://t4k3.github.io/BallgunFlasher-CAN/version.json?cb=' + Date.now(), { cache: 'no-store' });
     const v = await res.json();
+    const latest = v.fleet;
     const el = $('verCheck');
-    if (v.fleet === mine) { el.textContent = '✓ aggiornata'; el.style.color = 'var(--ok)'; }
-    else {
-      el.textContent = '⚠ vecchia — ricarica'; el.style.color = 'var(--warn)';
-      showWarn(`Stai usando una versione VECCHIA in cache (v${mine}). L'ultima è <b>v${v.fleet}</b>. ` +
+    if (latest === mine) {
+      el.textContent = '✓ aggiornata';
+      el.style.color = 'var(--ok)';
+    } else {
+      el.textContent = `⚠ vecchia — ricarica`;
+      el.style.color = 'var(--warn)';
+      showWarn(`Stai usando una versione VECCHIA in cache (v${mine}). L'ultima è <b>v${latest}</b>. ` +
                `Ricarica con <b>Cmd/Ctrl + Shift + R</b> (o chiudi e riapri la scheda).`);
     }
-  } catch (e) { /* offline: ignora */ }
+  } catch (e) { /* offline o version.json assente: non bloccare */ }
 }
 
 // =====================================================================
-// DB — roster + log eventi
+// DB — roster + log eventi (stesso DB della pagina cliente)
 // =====================================================================
 async function loadRoster() {
   try {
@@ -206,8 +221,11 @@ async function loadRoster() {
       for (const m of data.machines) dbRoster.set(m.serial, m);
       log(`Roster DB: ${dbRoster.size} macchine note`);
     }
-  } catch (e) { log(`(roster DB non disponibile: ${e.message || e})`); }
+  } catch (e) {
+    log(`(roster DB non disponibile: ${e.message || e})`);
+  }
 }
+
 async function logEvent(serial, type, extras = {}) {
   try {
     await fetch(`${API_BASE}/insert.php`, {
@@ -216,7 +234,9 @@ async function logEvent(serial, type, extras = {}) {
       body: JSON.stringify({ serial, type, meta: { source: 'fleet' }, ...extras }),
       keepalive: true,
     });
-  } catch (e) { log(`(log evento "${type}" fallito: ${e.message || e})`); }
+  } catch (e) {
+    log(`(log evento "${type}" fallito: ${e.message || e})`);
+  }
 }
 
 // =====================================================================
@@ -273,7 +293,7 @@ function otaBuildSectorPackets(sectorIndex, data) {
 }
 
 // =====================================================================
-// OTA — aggiorna UN dispositivo (connessione propria, isolata) — INVARIATO
+// OTA — aggiorna UN dispositivo (connessione propria, isolata)
 // =====================================================================
 async function otaUpdateOne(device, onProgress) {
   const fw = firmwareBytes;
@@ -294,8 +314,8 @@ async function otaUpdateOne(device, onProgress) {
     else await char.writeValue(buf);
   };
 
-  // Traccia la disconnessione: a fine OTA il device si riavvia DA SOLO e fa
-  // cadere il link — è il segnale che il finalize è andato a buon fine.
+  // Traccia la disconnessione del device: a fine OTA si riavvia DA SOLO e fa
+  // cadere il link — quello è il segnale che il finalize è andato a buon fine.
   let gotDisconnect = false, discResolve = null;
   const onDisconnect = () => { gotDisconnect = true; if (discResolve) { const f = discResolve; discResolve = null; f(); } };
   const waitForReboot = ms => new Promise(res => {
@@ -311,7 +331,8 @@ async function otaUpdateOne(device, onProgress) {
   char = await svc.getCharacteristic(OTA_CHAR_UUID);
   await char.startNotifications();
   char.addEventListener('characteristicvaluechanged', onNotify);
-  await new Promise(r => setTimeout(r, IS_ANDROID ? 1200 : 300));   // assestamento Android
+  // assestamento (Android: notifiche/PHY) prima del primo comando
+  await new Promise(r => setTimeout(r, IS_ANDROID ? 1200 : 300));
 
   try {
     // --- 1) ENTER OTA con retry (la prima notifica su Android può perdersi) ---
@@ -368,58 +389,147 @@ async function otaUpdateOne(device, onProgress) {
       onProgress((s / nSectors) * 100);
     }
 
-    // --- 4) finalize: NON disconnettere (il firmware abortisce l'OTA sulla
-    // disconnessione). Aspetta che il device si riavvii DA SOLO = finalize ok.
+    // --- 4) finalize: NON disconnettere. Il firmware abortisce l'OTA sulla
+    // disconnessione BLE (V20.5.1) e il finalize+reboot dura ~2,3s; un
+    // disconnect proattivo qui interrompeva il finalize e la macchina restava
+    // sulla versione vecchia. Aspetta invece che il device si riavvii DA SOLO
+    // (il link cade) = finalize riuscito.
     await waitForReboot(8000);
   } finally {
     try { device.removeEventListener('gattserverdisconnected', onDisconnect); } catch(e){}
     try { char && char.removeEventListener('characteristicvaluechanged', onNotify); } catch(e){}
+    // Disconnetti solo se ancora connesso (percorso d'errore: il device NON si
+    // è riavviato). Su successo è già caduto da solo dopo il reboot, quindi qui
+    // non tocchiamo nulla e non innescriamo l'abort dell'OTA.
     try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
   }
 }
 
 // =====================================================================
-// Card della macchina in corso/ultima
+// Stato per-riga
 // =====================================================================
-function makeCard(serial) {
+function setState(row, state, msg) {
+  row.state = state;
+  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn'}[state] || 'idle');
+  const labels = { idle:'In attesa', connecting:'Connessione…', flashing:'Aggiornamento…',
+                   done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi' };
+  row.stateLabel.textContent = labels[state] || state;
+  if (msg !== undefined) row.msg.textContent = msg;
+  if (state === 'failed' || state === 'motors') {
+    row.retryBtn.hidden = false; row.retryBtn.disabled = busy;
+    // "Riseleziona" solo sui veri errori (non per i motori accesi): ri-prende
+    // un handle BLE fresco dal selettore, come il flasher singolo.
+    row.reselectBtn.hidden = (state === 'motors'); row.reselectBtn.disabled = busy;
+  } else {
+    row.retryBtn.hidden = true;
+    row.reselectBtn.hidden = true;
+  }
+}
+
+// Ri-acquisisce il dispositivo dal selettore Bluetooth (handle FRESCO) e
+// riaggiorna. Rimedio per gli handle di getDevices() che si "incancreniscono":
+// è esattamente ciò che rende affidabile il flasher singolo (usa requestDevice).
+async function reselectDevice(row) {
+  if (busy) return;
+  try {
+    const d = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'wazlley' }],
+      optionalServices: [OTA_SERVICE_UUID],
+    });
+    rows.delete(row.device.id);
+    row.device = d;
+    rows.set(d.id, row);
+    row.nameEl.textContent = d.name || d.id;
+    log(`🔄 ${d.name}: riselezionata (handle fresco) — aggiorno`);
+    updateSequence([row]);
+  } catch (e) {
+    log(`(riselezione annullata: ${e.message || e})`);
+  }
+}
+
+// =====================================================================
+// Render lista dispositivi (da getDevices)
+// =====================================================================
+function renderDevice(device, force) {
+  if (rows.has(device.id)) return rows.get(device.id);
+  // Già su target (secondo il DB): non ingombrare l'elenco attivo — mettila tra
+  // le "nascoste" (rivelabili/forzabili dal link). 'force' la mostra comunque.
+  const knownPre = dbRoster.get(device.name);
+  if (!force && knownPre && knownPre.current_firmware === firmwareVersion) {
+    if (!hiddenDone.some(d => d.id === device.id)) hiddenDone.push(device);
+    return null;
+  }
   const el = document.createElement('div');
   el.className = 'device';
   el.innerHTML = `
     <div class="device-head">
-      <span class="dot idle"></span>
+      <input type="checkbox" checked>
       <span class="device-name"></span>
-      <span class="device-state"><span class="lbl">…</span>
-        <button class="ghost small retry" hidden>Riprova</button></span>
+      <span class="device-state"><span class="dot idle"></span><span class="lbl">In attesa</span>
+        <button class="ghost small retry" hidden>Riprova</button>
+        <button class="ghost small reselect" hidden>🔄 Riseleziona</button></span>
     </div>
     <div class="device-prog"><div></div></div>
     <div class="device-msg"></div>`;
-  el.querySelector('.device-name').textContent = serial;
-  const card = {
-    el,
+  const row = {
+    device, el,
+    chk: el.querySelector('input'),
+    nameEl: el.querySelector('.device-name'),
     dot: el.querySelector('.dot'),
-    lbl: el.querySelector('.lbl'),
+    stateLabel: el.querySelector('.lbl'),
+    retryBtn: el.querySelector('.retry'),
+    reselectBtn: el.querySelector('.reselect'),
     prog: el.querySelector('.device-prog > div'),
     msg: el.querySelector('.device-msg'),
-    retryBtn: el.querySelector('.retry'),
+    state: 'idle',
   };
-  $('active').prepend(el);
-  return card;
-}
-function setCard(card, state, msg) {
-  card.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn'}[state] || 'idle');
-  const labels = { connecting:'Connessione…', flashing:'Aggiornamento…', done:'✓ Fatto', failed:'✗ Errore', motors:'⚠ Motori accesi' };
-  card.lbl.textContent = labels[state] || state;
-  if (msg !== undefined) card.msg.textContent = msg;
-}
-function renderSessionMsg() {
-  $('sessionMsg').textContent = sessionDone
-    ? `✓ ${sessionDone} aggiornate in questa sessione: ${sessionSerials.join(', ')}`
-    : '';
+  row.nameEl.textContent = device.name || device.id;
+  // Versione installata nota dal DB (se presente): mostra e, se già allineata
+  // al target, deseleziona di default così "Aggiorna selezionati" la salta.
+  const known = dbRoster.get(device.name);
+  if (known && known.current_firmware) {
+    const upToDate = known.current_firmware === firmwareVersion;
+    row.msg.textContent = `Installato: ${known.current_firmware}${upToDate ? ' · già aggiornato ✓' : ''}`;
+    if (upToDate) row.chk.checked = false;
+  }
+  row.retryBtn.addEventListener('click', () => updateSequence([row]));
+  row.reselectBtn.addEventListener('click', () => reselectDevice(row));
+  rows.set(device.id, row);
+  $('deviceList').appendChild(el);
+  return row;
 }
 
-// =====================================================================
-// Riepilogo + registro (dal DB)
-// =====================================================================
+async function refreshDevices() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+    showWarn(`Il tuo Chrome non espone <b>getDevices()</b> (serve per ricordare i dispositivi).
+      Abilita <code>chrome://flags/#enable-web-bluetooth-new-permissions-backend</code> e riavvia,
+      oppure usa "Aggiungi sparapallone" ogni volta.`);
+    return;
+  }
+  const devices = await navigator.bluetooth.getDevices();
+  const wazlley = devices.filter(d => (d.name||'').toLowerCase().includes('wazlley'));
+  for (const d of wazlley) renderDevice(d);
+  renderHiddenDoneNote();
+  updateEmptyState();
+  log(`Dispositivi autorizzati: ${wazlley.length} (${rows.size} da aggiornare, ${hiddenDone.length} già ok)`);
+}
+
+function updateEmptyState() {
+  const hasGranted = rows.size > 0;
+  const hasAny = hasGranted || dbRoster.size > 0;
+  $('updateAllBtn').disabled = !hasGranted || busy || !firmwareBytes;
+  let empty = $('deviceList').querySelector('.empty');
+  if (!hasAny && !empty) {
+    empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Nessuno sparapallone autorizzato. Premi "+ Aggiungi sparapallone" per ognuno (una volta sola).';
+    $('deviceList').appendChild(empty);
+  } else if (hasAny && empty) {
+    empty.remove();
+  }
+}
+
+// Riepilogo fleet (conteggi per versione) — scala a centinaia di macchine.
 function renderSummary() {
   let onTarget = 0;
   for (const m of dbRoster.values()) if (m.current_firmware === firmwareVersion) onTarget++;
@@ -434,11 +544,17 @@ function renderSummary() {
   chip('ok', `Su ${firmwareVersion || 'target'}`, onTarget);
   chip('old', 'Da aggiornare', outdated);
 }
+
+// Registro fleet completo: tabella COMPATTA (una riga per macchina),
+// ricercabile e filtrabile. Sola lettura — per aggiornare serve autorizzare
+// la macchina in questo browser (sezione "Da aggiornare ora").
 function renderRegistry() {
   const q = ($('search').value || '').toLowerCase().trim();
   const onlyOld = $('onlyOld').checked;
+  const granted = new Set([...rows.values()].map(r => r.device.name));
   const list = $('registryList'); list.innerHTML = '';
   $('regCount').textContent = dbRoster.size;
+
   const items = [...dbRoster.values()].sort((a, b) => a.serial.localeCompare(b.serial));
   let shown = 0;
   for (const m of items) {
@@ -450,8 +566,8 @@ function renderRegistry() {
     const dot = document.createElement('span'); dot.className = 'rdot ' + (isOld ? 'old' : 'ok');
     const rs = document.createElement('span'); rs.className = 'rs'; rs.textContent = m.serial;
     row.append(dot, rs);
-    if (sessionSerials.includes(m.serial)) {
-      const g = document.createElement('span'); g.className = 'rg'; g.textContent = '● ora';
+    if (granted.has(m.serial)) {
+      const g = document.createElement('span'); g.className = 'rg'; g.textContent = '● autorizzata';
       row.append(g);
     }
     const rv = document.createElement('span'); rv.className = 'rv'; rv.textContent = v;
@@ -465,94 +581,174 @@ function renderRegistry() {
   }
 }
 
-// =====================================================================
-// Flusso: scegli una macchina dal selettore (handle FRESCO) e aggiornala
-// =====================================================================
-async function updateOneDevice(device) {
-  if (busy || !firmwareBytes) return;
-  busy = true; $('pickBtn').disabled = true;
-  const serial = device.name || device.id;
-  const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
-  const card = makeCard(serial);
-  logEvent(serial, 'ota_started', { from_version: fromVer, to_version: firmwareVersion });
-  log(`▶ ${serial}: inizio`);
+function renderFleetViews() { renderSummary(); renderRegistry(); }
 
-  let success = false, motors = false, lastErr = '';
-  for (let attempt = 1; attempt <= DEVICE_ATTEMPTS && !success && !motors; attempt++) {
-    setCard(card, 'connecting', attempt > 1 ? `Tentativo ${attempt}/${DEVICE_ATTEMPTS}…` : 'Connessione…');
-    card.prog.style.width = '0%';
-    const t0 = nowMs();
-    try {
-      await otaUpdateOne(device, pct => {
-        setCard(card, 'flashing', `Aggiornamento… ${pct.toFixed(0)}%`);
-        card.prog.style.width = pct.toFixed(1) + '%';
-      });
-      const dur = Math.round((nowMs() - t0) / 1000);
-      card.prog.style.width = '100%';
-      setCard(card, 'done', `✓ Aggiornata a ${firmwareVersion} in ${dur}s — riavvio…`);
-      dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
-      logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
-      success = true;
-    } catch (e) {
-      lastErr = e.message || String(e);
-      if (lastErr.includes('MOTORI')) { motors = true; setCard(card, 'motors', lastErr); break; }
-      log(`  ✗ ${serial}: ${lastErr}${attempt < DEVICE_ATTEMPTS ? ' — ritento' : ''}`);
-      if (attempt < DEVICE_ATTEMPTS) {
-        setCard(card, 'connecting', `Errore — ritento tra ${Math.round(RETRY_PAUSE_MS/1000)}s…`);
-        await sleep(RETRY_PAUSE_MS);   // recupero: il device esce dall'OTA mode + BLE si assesta
-      }
-    }
-  }
-
-  if (success) {
-    sessionDone++;
-    if (!sessionSerials.includes(serial)) sessionSerials.push(serial);
-    log(`✅ ${serial}: completato`);
-    setTimeout(() => {   // mostra il ✓ qualche secondo, poi sfuma la card
-      card.el.style.transition = 'opacity .4s ease'; card.el.style.opacity = '0';
-      setTimeout(() => { try { card.el.remove(); } catch (e) {} }, 420);
-    }, 4000);
-  } else {
-    if (!motors) setCard(card, 'failed', lastErr || 'fallito');
-    logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: lastErr });
-    card.retryBtn.hidden = false;
-    card.retryBtn.onclick = () => { try { card.el.remove(); } catch (e) {} updateOneDevice(device); };
-  }
-  renderSessionMsg();
-  renderSummary(); renderRegistry();
-  busy = false; $('pickBtn').disabled = false;
+// Nota "N già aggiornate (nascoste)" + link per rivelarle/forzarle (utile se
+// il DB segna una versione che in realtà non è quella installata).
+function renderHiddenDoneNote() {
+  const el = $('hiddenDoneNote');
+  if (!hiddenDone.length) { el.textContent = ''; return; }
+  el.innerHTML = `✓ ${hiddenDone.length} già su ${firmwareVersion} in questo browser (nascoste) · ` +
+                 `<a href="#" id="showHidden" style="color:var(--accent); font-weight:700;">mostra / forza</a>`;
+  $('showHidden').addEventListener('click', (e) => {
+    e.preventDefault();
+    const toShow = hiddenDone.slice();
+    hiddenDone = [];
+    toShow.forEach(d => renderDevice(d, true));
+    renderHiddenDoneNote();
+    updateEmptyState();
+  });
 }
 
-$('pickBtn').addEventListener('click', async () => {
-  if (busy || !firmwareBytes) return;
-  let device;
+// Contatore "aggiornate in questa sessione" + rimozione delle completate
+// dall'elenco attivo (così non si accumulano e resti focalizzato su ciò che
+// manca). La macchina resta comunque nel "Registro fleet completo" via DB.
+let sessionDone = 0;
+function bumpSessionDone() {
+  sessionDone++;
+  $('sessionDone').textContent = ` · ✓ ${sessionDone} aggiornate in questa sessione`;
+}
+function scheduleRemove(row) {
+  setTimeout(() => {
+    row.el.style.transition = 'opacity .4s ease';
+    row.el.style.opacity = '0';
+    setTimeout(() => {
+      try { row.el.remove(); } catch (e) {}
+      rows.delete(row.device.id);
+      updateEmptyState();
+      renderRegistry();   // aggiorna il flag "autorizzata" nel registro
+    }, 420);
+  }, 4000);  // mostra il ✓ verde 4s, poi sfuma e sparisce
+}
+
+// =====================================================================
+// Aggiunta dispositivo (grant una-tantum)
+// =====================================================================
+$('addBtn').addEventListener('click', async () => {
   try {
-    device = await navigator.bluetooth.requestDevice({
+    const d = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'wazlley' }],
       optionalServices: [OTA_SERVICE_UUID],
     });
-  } catch (e) { return; }   // selettore annullato
-  updateOneDevice(device);
+    renderDevice(d, true);   // aggiunta manuale: mostrala sempre (anche se il DB la dà aggiornata)
+    updateEmptyState();
+    log(`Aggiunto: ${d.name}`);
+  } catch (e) { log(`(aggiunta annullata: ${e.message || e})`); }
 });
 
-$('search').addEventListener('input', renderRegistry);
-$('onlyOld').addEventListener('change', renderRegistry);
+$('refreshBtn').addEventListener('click', refreshDevices);
+
+// =====================================================================
+// Update sequenziale
+// =====================================================================
+async function updateSequence(targetRows) {
+  if (busy || !firmwareBytes) return;
+  busy = true;
+  $('updateAllBtn').disabled = true;
+  $('addBtn').disabled = true;
+  rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
+
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  let okCount = 0, failCount = 0;
+  for (const row of targetRows) {
+    const serial = row.device.name;
+    const fromVer = (dbRoster.get(serial) || {}).current_firmware || null;
+    logEvent(serial, 'ota_started', { from_version: fromVer, to_version: firmwareVersion });
+    log(`▶ ${serial}: inizio`);
+
+    let success = false, motors = false, lastErr = '';
+    for (let attempt = 1; attempt <= DEVICE_ATTEMPTS && !success && !motors; attempt++) {
+      setState(row, 'connecting', attempt > 1 ? `Tentativo ${attempt}/${DEVICE_ATTEMPTS}…` : '');
+      row.prog.style.width = '0%';
+      const t0 = nowMs();
+      try {
+        await otaUpdateOne(row.device, pct => {
+          setState(row, 'flashing');
+          row.prog.style.width = pct.toFixed(1) + '%';
+        });
+        const dur = Math.round((nowMs() - t0) / 1000);
+        row.prog.style.width = '100%';
+        setState(row, 'done', `Riavvio su ${firmwareVersion}…`);
+        log(`✅ ${serial}: completato in ${dur}s${attempt > 1 ? ` (tentativo ${attempt})` : ''}`);
+        dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
+        logEvent(serial, 'ota_completed', { from_version: fromVer, to_version: firmwareVersion, duration_s: dur });
+        success = true;
+      } catch (e) {
+        lastErr = e.message || String(e);
+        if (lastErr.includes('MOTORI')) { motors = true; setState(row, 'motors', lastErr); break; }
+        log(`  ✗ ${serial}: ${lastErr}${attempt < DEVICE_ATTEMPTS ? ' — ritento' : ''}`);
+        if (attempt < DEVICE_ATTEMPTS) {
+          // Recupero: lascia che la macchina esca dall'OTA mode e il BLE si
+          // assesti prima di riconnettere (è ciò che mancava al fleet).
+          setState(row, 'connecting', `Errore — ritento tra ${Math.round(RETRY_PAUSE_MS/1000)}s…`);
+          await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
+        }
+      }
+    }
+
+    if (success) {
+      okCount++;
+      bumpSessionDone();
+      scheduleRemove(row);   // togli la completata dall'elenco attivo (resta nel registro DB)
+    } else {
+      if (!motors) setState(row, 'failed', lastErr || 'fallito');
+      log(`❌ ${serial}: ${lastErr || 'fallito'} (dopo ${DEVICE_ATTEMPTS} tentativi)`);
+      logEvent(serial, 'ota_failed', { from_version: fromVer, to_version: firmwareVersion, error: lastErr });
+      failCount++;
+    }
+    await new Promise(r => setTimeout(r, INTER_DEVICE_MS)); // pausa tra una macchina e l'altra
+  }
+
+  busy = false;
+  $('updateAllBtn').disabled = false;
+  $('addBtn').disabled = false;
+  rows.forEach(r => {
+    if (r.state==='failed'||r.state==='motors') { r.retryBtn.disabled = false; r.reselectBtn.disabled = false; }
+  });
+  renderFleetViews();   // aggiorna riepilogo + registro con le nuove versioni
+  log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
+}
+
+// Seleziona/forza tutte le macchine in raggio (anche quelle che il DB segna
+// "già aggiornato" — utile perché la versione del DB può non essere reale).
+$('selectAllBtn').addEventListener('click', () => {
+  let n = 0;
+  rows.forEach(r => { if (r.state !== 'done') { r.chk.checked = true; n++; } });
+  $('selMsg').textContent = n ? `${n} macchine selezionate.` : '';
+});
+
+$('updateAllBtn').addEventListener('click', () => {
+  const selected = [...rows.values()].filter(r => r.chk.checked && r.state !== 'done');
+  if (!selected.length) {
+    $('selMsg').textContent = '⚠ Nessuna macchina selezionata. Le "già aggiornato" sono deselezionate ' +
+      '(la versione viene dal DB e può non essere reale): spunta le caselle o premi "Seleziona tutte" per forzare.';
+    log('Nessuno sparapallone selezionato.');
+    return;
+  }
+  $('selMsg').textContent = '';
+  updateSequence(selected);
+});
 
 // =====================================================================
 // Avvio
 // =====================================================================
 (async () => {
-  checkLatest();
   if (!navigator.bluetooth) {
     showWarn('Web Bluetooth non disponibile. Usa Chrome/Edge su desktop o Chrome su Android (no iOS).');
     return;
   }
-  try { await downloadFirmware(); $('pickBtn').disabled = false; }
-  catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
-  await loadRoster();
-  renderSummary();
-  renderRegistry();
+  checkLatest();             // "sto usando l'ultima versione della pagina?"
+  try { await downloadFirmware(); } catch (e) { showWarn('Errore scaricando il firmware: ' + (e.message||e)); }
+  await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
+  await refreshDevices();
+  renderFleetViews();
+  renderHiddenDoneNote();
+  updateEmptyState();
 })();
+
+// Ricerca / filtro del registro
+$('search').addEventListener('input', renderRegistry);
+$('onlyOld').addEventListener('change', renderRegistry);
 </script>
 </body>
 </html>
