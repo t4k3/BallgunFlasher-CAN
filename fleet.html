@@ -89,7 +89,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.1</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.6.2</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -325,6 +325,25 @@ async function otaUpdateOne(device, onProgress) {
     discResolve = () => { clearTimeout(t); res(); };
   });
   device.addEventListener('gattserverdisconnected', onDisconnect);
+
+  // --- sveglia l'handle "freddo" di getDevices ---
+  // Un device ricordato (getDevices) fallisce gatt.connect() con "Bluetooth
+  // Device is no longer in range" finché Chrome non riceve una pubblicità
+  // fresca. watchAdvertisements() la aspetta e "risveglia" l'handle. Se non è
+  // supportato (o la pubblicità non arriva) si prova comunque a connettere.
+  if (!device.gatt.connected && typeof device.watchAdvertisements === 'function') {
+    try {
+      const ac = new AbortController();
+      const seen = new Promise(res => {
+        const onAdv = () => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(true); };
+        device.addEventListener('advertisementreceived', onAdv);
+        setTimeout(() => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(false); }, 6000);
+      });
+      await device.watchAdvertisements({ signal: ac.signal });
+      await seen;
+      try { ac.abort(); } catch(e){}
+    } catch (e) { /* non supportato → connetti comunque */ }
+  }
 
   // --- connessione ---
   const server = await device.gatt.connect();
