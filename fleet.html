@@ -94,7 +94,7 @@
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.1</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.2</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -179,8 +179,9 @@ const INTER_DEVICE_MS  = 1500;   // pausa tra una macchina e la successiva
 const AFTER_FW_REBOOT_MS = 11000; // 'Entrambi': attesa riavvio dopo firmware, prima del display
 
 // NEXTION display via BLE passthrough (stessa service/char dell'OTA).
-const TFT_SQUARE_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusSquare.tft';
-const TFT_CIRCLE_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusRounded.tft';
+const TFT_SQUARE_URL     = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusSquare.tft';
+const TFT_CIRCLE_URL     = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusRounded.tft';
+const TFT_ROUNDSMALL_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/NEXTION/canBusRoundedSmall.tft';
 const NBLE_CHUNK_SIZE  = 4096;   // chunk logico Nextion (whmi-wris)
 const NBLE_BLE_WRITE   = 200;    // payload write-without-response (conservativo)
 const NBLE_ACK_TIMEOUT = 15000;  // ms — l'ACK Nextion può essere lento durante l'erase
@@ -200,6 +201,7 @@ let firmwareBytes = null;
 let firmwareVersion = null;
 let tftSquare = null;        // { data, size, name, version }
 let tftCircle = null;
+let tftRoundSmall = null;    // 2.1" NX4848E021
 let fleetMode = 'firmware';  // 'firmware' | 'display' | 'both'
 let busy = false;
 const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
@@ -294,14 +296,16 @@ function extractTftVersion(uint8) {
 }
 async function downloadTfts() {
   try {
-    const [sq, ci] = await Promise.all([
+    const [sq, ci, rs] = await Promise.all([
       fetch(`${TFT_SQUARE_URL}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error(`square HTTP ${r.status}`); return r.arrayBuffer(); }),
       fetch(`${TFT_CIRCLE_URL}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error(`round HTTP ${r.status}`); return r.arrayBuffer(); }),
+      fetch(`${TFT_ROUNDSMALL_URL}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error(`round-small HTTP ${r.status}`); return r.arrayBuffer(); }),
     ]);
-    tftSquare = { data:new Uint8Array(sq), size:sq.byteLength, name:'canBusSquare.tft',  version:extractTftVersion(new Uint8Array(sq)) };
-    tftCircle = { data:new Uint8Array(ci), size:ci.byteLength, name:'canBusRounded.tft', version:extractTftVersion(new Uint8Array(ci)) };
-    $('targetTft').textContent = `square ${tftSquare.version} · round ${tftCircle.version}`;
-    log(`Display .tft: square ${tftSquare.version}, round ${tftCircle.version}`);
+    tftSquare     = { data:new Uint8Array(sq), size:sq.byteLength, name:'canBusSquare.tft',       version:extractTftVersion(new Uint8Array(sq)) };
+    tftCircle     = { data:new Uint8Array(ci), size:ci.byteLength, name:'canBusRounded.tft',      version:extractTftVersion(new Uint8Array(ci)) };
+    tftRoundSmall = { data:new Uint8Array(rs), size:rs.byteLength, name:'canBusRoundedSmall.tft', version:extractTftVersion(new Uint8Array(rs)) };
+    $('targetTft').textContent = `square ${tftSquare.version} · round ${tftCircle.version} · round-S ${tftRoundSmall.version}`;
+    log(`Display .tft: square ${tftSquare.version}, round ${tftCircle.version}, round-S ${tftRoundSmall.version}`);
   } catch (e) {
     log(`(.tft display non caricati: ${e.message || e})`);
     $('targetTft').textContent = 'non disponibili';
@@ -613,12 +617,15 @@ async function nextionUpdateOne(device, onProgress) {
     const mPart = parts.find(p => /^NX/i.test(p.trim()));
     if (mPart) {
       const mu = mPart.trim().toUpperCase();
-      if (mu.includes('NX4827')) model = 'square';        // 4.3" square
-      else if (mu.includes('NX4848')) model = 'circle';   // 2.8" round
+      // ATTENZIONE: sia il 2.8" (E028) sia il 2.1" (E021) iniziano con NX4848 →
+      // controllare E021 PRIMA del generico NX4848.
+      if (mu.includes('NX4827')) model = 'square';            // 4.3" square
+      else if (mu.includes('NX4848E021')) model = 'roundsmall'; // 2.1" round
+      else if (mu.includes('NX4848')) model = 'circle';        // 2.8" round (E028)
       const v = parseInt(parts[parts.indexOf(mPart) + 1], 10); if (!isNaN(v)) detectedFw = v;
     }
     if (!model) throw new Error(`modello display non riconosciuto (${comok})`);
-    const tft = (model === 'square') ? tftSquare : tftCircle;
+    const tft = (model === 'square') ? tftSquare : (model === 'roundsmall') ? tftRoundSmall : tftCircle;
     if (!tft) throw new Error(`.tft ${model} non caricato`);
     log(`  ${device.name}: display ${model} → ${tft.name} ${tft.version}`);
     fnble.rxBuf = new Uint8Array(0);
@@ -955,7 +962,7 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (needTft && !(tftSquare && tftCircle)) {
+  if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
     $('selMsg').textContent = '⚠ I .tft del display non sono caricati. Ricarica la pagina.';
     return;
   }
