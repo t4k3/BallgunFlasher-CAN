@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.3</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.4</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -305,7 +305,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.3 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.4 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2122,31 +2122,70 @@ async function fparReadParam(node, idx){
     return null;
 }
 
+// Quale unico nodo risponde sul bus (per il ribattesimo a scheda singola).
+async function fparDetectSingleNode(){
+    if (await fparReadParam(1, 1) !== null) return 1;
+    if (await fparReadParam(2, 1) !== null) return 2;
+    return null;
+}
+
+// Sequenza guidata di ribattesimo quando la config e' anomala (id duplicati o
+// nodo mancante). Niente scelta manuale: MASTER prima, SLAVE poi, con le pause
+// fisiche guidate (scollega/collega). Ogni scheda viene configurata da sola sul bus.
+async function fparGuidedRecovery(){
+    log('⚠ Config nodi anomala → sequenza guidata di ribattesimo.', 'FTD30');
+    fparStatus(true, 'Recovery: master…');
+    if (!confirm('Config nodi anomala (id duplicati o nodo mancante).\n\nAvvio sequenza guidata.\n\n1) SCOLLEGA lo SLAVE dal bus CAN — lascia solo il MASTER, bus terminato (120Ω).\n\nPremi OK quando fatto.'))
+        throw new Error('sequenza annullata');
+    let n = await fparDetectSingleNode();
+    if (n === null) throw new Error('Nessuna scheda risponde col solo master collegato — controlla cavo/terminazione 120Ω.');
+    log(`Ribattezzo come MASTER (id=1) la scheda (ora su node ${n})…`, 'FTD30');
+    fparProgress(0);
+    const rm = await fparRestoreNode(n, fparPrep(FPAR.set, 1), 'MASTER');
+
+    fparStatus(true, 'Recovery: slave…');
+    if (!confirm('Master aggiornato ✓\n\n2) SCOLLEGA il MASTER e COLLEGA lo SLAVE — solo lo slave sul bus, terminato.\n\nPremi OK quando fatto.'))
+        throw new Error('sequenza annullata (master gia aggiornato)');
+    n = await fparDetectSingleNode();
+    if (n === null) throw new Error('Nessuna scheda risponde col solo slave collegato — controlla cavo/terminazione 120Ω.');
+    log(`Ribattezzo come SLAVE (id=2) la scheda (ora su node ${n})…`, 'FTD30');
+    fparProgress(0);
+    const rs = await fparRestoreNode(n, fparPrep(FPAR.set, 2), 'SLAVE');
+    fparProgress(100);
+
+    log(`=== Ribattesimo COMPLETATO (master ${rm.ok}w/${rm.skip}s, slave ${rs.ok}w/${rs.skip}s) ===`, 'FTD30');
+    fparStatus(rm.saveOk && rs.saveOk, 'Ribattesimo ✓');
+    alert('Fatto ✓\n\n3) COLLEGA TUTTO (master + slave) e spegni/riaccendi i FTD30 per applicare.');
+    log('>>> Collega tutto + spegni/riaccendi i FTD30.', 'FTD30');
+}
+
 async function fparRestoreAll(){
     if (FPAR.busy) return;
     if (!FPAR.set) { log('Carica prima un set .prm', 'FTD30'); return; }
     FPAR.busy = true; FQ('fparRestoreBtn').disabled = true;
     try {
         if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
-        // PRE-CHECK: i due nodi rispondono e hanno id distinti?
+        // PRE-CHECK nodi: 1 e 2 distinti presenti?
         fparStatus(true, 'Verifica nodi…');
-        const id1 = await fparReadParam(1, 1);   // DeviceID (P1) di node1
-        const id2 = await fparReadParam(2, 1);   // DeviceID (P1) di node2
-        log(`Pre-check: node1 DeviceID=${id1===null?'—':id1}, node2 DeviceID=${id2===null?'—':id2}`, 'FTD30');
-        if (id1 === null && id2 === null)
-            throw new Error('Nessun FTD30 risponde sul CAN — accesi? cavo collegato?');
-        if (id2 === null)
-            throw new Error('Nodo 2 non trovato: possibili DUE schede con lo stesso id=1. Collega/ribattezza una scheda alla volta.');
-        if (id1 === null)
-            throw new Error('Nodo 1 non trovato — controlla i DeviceID delle schede.');
-        fparProgress(0);
-        const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
-        const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
-        fparProgress(100);
-        const allOk = r1.saveOk && r2.saveOk;
-        log(`=== Ripristino FTD30 ${allOk ? 'COMPLETATO' : 'con avvisi'} (node1 ${r1.ok}w/${r1.skip}s, node2 ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
-        fparStatus(allOk, allOk ? 'Completato ✓' : 'Completato con avvisi');
-        log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
+        const n1 = await fparReadParam(1, 1);   // node1 (id=1) presente?
+        const n2 = await fparReadParam(2, 1);   // node2 (id=2) presente?
+        log(`Pre-check: node1 ${n1===null?'ASSENTE':'OK'}, node2 ${n2===null?'ASSENTE':'OK'}`, 'FTD30');
+        if (n1 === null && n2 === null)
+            throw new Error('Nessun FTD30 risponde sul CAN — accesi? cavo/terminazione?');
+        if (n1 !== null && n2 !== null) {
+            // CONFIG NORMALE (1 e 2 distinti) -> restore di entrambi i nodi
+            fparProgress(0);
+            const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
+            const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
+            fparProgress(100);
+            const allOk = r1.saveOk && r2.saveOk;
+            log(`=== Ripristino COMPLETATO (node1 ${r1.ok}w/${r1.skip}s, node2 ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
+            fparStatus(allOk, allOk ? 'Completato ✓' : 'Completato con avvisi');
+            log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
+        } else {
+            // ANOMALIA (id duplicati o un nodo mancante) -> sequenza guidata
+            await fparGuidedRecovery();
+        }
     } catch (e) {
         log('Errore restore FTD30: ' + (e.message || e), 'FTD30');
         fparStatus(false, 'Errore');
