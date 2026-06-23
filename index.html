@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.1</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.2</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -290,13 +290,11 @@
                 <div class="status-dot" id="fparStatusDot"></div>
                 <span id="fparStatusText">Disconnected</span>
             </div>
-            <label class="file-pick" for="fparMasterFile" id="fparMasterLabel">📄 carica MASTER .prm (nodo 1)</label>
-            <input type="file" id="fparMasterFile" accept=".prm" style="display:none;" />
-            <label class="file-pick" for="fparSlaveFile" id="fparSlaveLabel">📄 carica SLAVE .prm (nodo 2)</label>
-            <input type="file" id="fparSlaveFile" accept=".prm" style="display:none;" />
-            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Ripristina parametri (master+slave)</button>
+            <label class="file-pick" for="fparSetFile" id="fparSetLabel">📄 carica set .prm</label>
+            <input type="file" id="fparSetFile" accept=".prm" style="display:none;" />
+            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Ripristina parametri (node1 + node2)</button>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Motori fermi · scrive tutto + SAVE su node1 (master) e node2 (slave) · P21=0</div>
+            <div class="chip-info" id="fparInfo">Motori fermi · stesso set su node1 (id=1) e node2 (id=2) · P21=0 · + SAVE</div>
         </div>
     </div>
 
@@ -307,7 +305,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.1 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.2 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2027,7 +2025,7 @@ document.getElementById('nbleConnectBtn').addEventListener('click', async () => 
 // e salva (bit8 di 0x3000). Funziona via BLE su qualsiasi macchina.
 // =====================================================================
 const FQ = id => document.getElementById(id);
-const FPAR = { device:null, server:null, char:null, waiter:null, master:null, slave:null, busy:false };
+const FPAR = { device:null, server:null, char:null, waiter:null, set:null, busy:false };
 const FPAR_BATCH = 24;   // parametri per pacchetto BLE (24*6+4 = 148 byte)
 
 function fparStatus(connected, text){
@@ -2104,26 +2102,28 @@ async function fparRestoreNode(node, params, label){
     return { ok, skip, saveOk };
 }
 
-// Forza P21=0 (app FTD30 disabilitata) a prescindere dal file.
-function fparWithP21Zero(arr){
+// Prepara il set per un nodo: forza P1 (DeviceID) = numero nodo e P21 = 0.
+// Stesso set su entrambi i nodi: cambia solo l'id (1 master / 2 slave).
+function fparPrep(arr, node){
     const c = arr.map(p => ({ ...p }));
-    const p21 = c.find(p => p.index === 21);
-    if (p21) p21.value = 0; else c.push({ index: 21, value: 0 });
+    const set = (idx, val) => { const e = c.find(p => p.index === idx); if (e) e.value = val; else c.push({ index: idx, value: val }); };
+    set(1, node);   // DeviceID = numero nodo
+    set(21, 0);     // app FTD30 disabilitata
     return c;
 }
 
 async function fparRestoreAll(){
     if (FPAR.busy) return;
-    if (!FPAR.master || !FPAR.slave) { log('Carica prima MASTER e SLAVE .prm', 'FTD30'); return; }
+    if (!FPAR.set) { log('Carica prima un set .prm', 'FTD30'); return; }
     FPAR.busy = true; FQ('fparRestoreBtn').disabled = true;
     try {
         if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
         fparProgress(0);
-        const r1 = await fparRestoreNode(1, fparWithP21Zero(FPAR.master), 'MASTER');
-        const r2 = await fparRestoreNode(2, fparWithP21Zero(FPAR.slave),  'SLAVE');
+        const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
+        const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
         fparProgress(100);
         const allOk = r1.saveOk && r2.saveOk;
-        log(`=== Ripristino FTD30 ${allOk ? 'COMPLETATO' : 'con avvisi'} (master ${r1.ok}w/${r1.skip}s, slave ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
+        log(`=== Ripristino FTD30 ${allOk ? 'COMPLETATO' : 'con avvisi'} (node1 ${r1.ok}w/${r1.skip}s, node2 ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
         fparStatus(allOk, allOk ? 'Completato ✓' : 'Completato con avvisi');
         log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
     } catch (e) {
@@ -2134,40 +2134,26 @@ async function fparRestoreAll(){
     }
 }
 
-FQ('fparMasterFile').addEventListener('change', async e => {
+FQ('fparSetFile').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
-    FPAR.master = fparParsePrm(await f.text());
-    FQ('fparMasterLabel').textContent = `✓ MASTER: ${f.name} (${FPAR.master.length} par)`;
-    FQ('fparRestoreBtn').disabled = !(FPAR.master && FPAR.slave);
-});
-FQ('fparSlaveFile').addEventListener('change', async e => {
-    const f = e.target.files[0]; if (!f) return;
-    FPAR.slave = fparParsePrm(await f.text());
-    FQ('fparSlaveLabel').textContent = `✓ SLAVE: ${f.name} (${FPAR.slave.length} par)`;
-    FQ('fparRestoreBtn').disabled = !(FPAR.master && FPAR.slave);
+    FPAR.set = fparParsePrm(await f.text());
+    FQ('fparSetLabel').textContent = `✓ set: ${f.name} (${FPAR.set.length} par)`;
+    FQ('fparRestoreBtn').disabled = !FPAR.set;
 });
 FQ('fparRestoreBtn').addEventListener('click', fparRestoreAll);
 
-// Pre-carica i set MASTER/SLAVE da remoto (repo), così non serve sceglierli ogni
-// volta. Restano sovrascrivibili con un file .prm locale (i <label> sono file-pick).
-const FTD30_REMOTE = {
-    master: `${FIRMWARE_BASE}/FTD30/MASTER_RBTV01.prm`,
-    slave:  `${FIRMWARE_BASE}/FTD30/SLAVE_RBTV01.prm`,
-};
+// Pre-carica il set da remoto (repo), così non serve sceglierlo ogni volta.
+// Sovrascrivibile con un file .prm locale (il <label> è un file-pick).
+const FTD30_REMOTE_SET = `${FIRMWARE_BASE}/FTD30/MASTER_RBTV01.prm`;
 (async function fparLoadRemote(){
     try {
-        const [mt, st] = await Promise.all([
-            fetch(`${FTD30_REMOTE.master}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error('master'); return r.text(); }),
-            fetch(`${FTD30_REMOTE.slave }?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error('slave');  return r.text(); }),
-        ]);
-        FPAR.master = fparParsePrm(mt);
-        FPAR.slave  = fparParsePrm(st);
-        FQ('fparMasterLabel').textContent = `✓ MASTER da remoto (${FPAR.master.length} par) · …o carica .prm`;
-        FQ('fparSlaveLabel').textContent  = `✓ SLAVE da remoto (${FPAR.slave.length} par) · …o carica .prm`;
-        FQ('fparRestoreBtn').disabled = !(FPAR.master && FPAR.slave);
-        log(`FTD30: set caricati da remoto (master ${FPAR.master.length}, slave ${FPAR.slave.length} par)`, 'FTD30');
+        const t = await fetch(`${FTD30_REMOTE_SET}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error('set'); return r.text(); });
+        FPAR.set = fparParsePrm(t);
+        FQ('fparSetLabel').textContent = `✓ set da remoto (${FPAR.set.length} par) · …o carica .prm`;
+        FQ('fparRestoreBtn').disabled = !FPAR.set;
+        log(`FTD30: set caricato da remoto (${FPAR.set.length} par)`, 'FTD30');
     } catch (e) {
-        // remoto non disponibile: resta il caricamento locale dai due file-pick
+        // remoto non disponibile: resta il caricamento locale dal file-pick
     }
 })();
 </script>
