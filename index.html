@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.4.10</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.0</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -279,6 +279,25 @@
             <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
             <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
+
+        <!-- FTD30 PARAMETRI (CAN, via BLE 0xFC) -->
+        <div class="device-panel ftd30">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4 M12 19v4 M1 12h4 M19 12h4" stroke="currentColor" stroke-width="2"/></svg>
+                PARAMETRI FTD30 <span class="sub">CAN · ripristino set</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="fparStatusDot"></div>
+                <span id="fparStatusText">Disconnected</span>
+            </div>
+            <label class="file-pick" for="fparMasterFile" id="fparMasterLabel">📄 carica MASTER .prm (nodo 1)</label>
+            <input type="file" id="fparMasterFile" accept=".prm" style="display:none;" />
+            <label class="file-pick" for="fparSlaveFile" id="fparSlaveLabel">📄 carica SLAVE .prm (nodo 2)</label>
+            <input type="file" id="fparSlaveFile" accept=".prm" style="display:none;" />
+            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Ripristina parametri (master+slave)</button>
+            <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
+            <div class="chip-info" id="fparInfo">Motori fermi · scrive tutto + SAVE su node1 (master) e node2 (slave) · P21=0</div>
+        </div>
     </div>
 
     <!-- COLUMN 3: CONSOLE (full vertical) -->
@@ -288,7 +307,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.4.10 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.0 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2000,6 +2019,134 @@ document.getElementById('nbleConnectBtn').addEventListener('click', async () => 
         log(`error: ${e.message || e}`, 'NEXTION-BLE');
     }
 });
+
+// =====================================================================
+// FTD30 PARAMETRI (CAN via BLE 0xFC) — carica MASTER/SLAVE .prm e ripristina
+// il set su node1/node2. La pagina manda i comandi 0xFC all'ESP32, che li
+// esegue come SDO CANopen (OD = 0x2000 + parametro), sblocca (PW=11 @ 0x303F),
+// e salva (bit8 di 0x3000). Funziona via BLE su qualsiasi macchina.
+// =====================================================================
+const FQ = id => document.getElementById(id);
+const FPAR = { device:null, server:null, char:null, waiter:null, master:null, slave:null, busy:false };
+const FPAR_BATCH = 24;   // parametri per pacchetto BLE (24*6+4 = 148 byte)
+
+function fparStatus(connected, text){
+    const d = FQ('fparStatusDot'); if (d) d.className = 'status-dot' + (connected ? ' connected' : '');
+    const t = FQ('fparStatusText'); if (t) t.textContent = text;
+}
+function fparProgress(pct){
+    const p = FQ('fparProgress'), b = FQ('fparProgressBar');
+    if (p) p.style.display = 'block';
+    if (b) b.style.width = Math.round(pct) + '%';
+}
+
+// Parse del .prm: sezione [Drive], righe "indice, valore, nome".
+function fparParsePrm(text){
+    const out = []; let inDrive = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[')) { inDrive = /^\[Drive\]/i.test(line); continue; }
+        if (!inDrive || !line) continue;
+        const m = line.match(/^(\d+)\s*,\s*(-?\d+)\s*,/);
+        if (m) out.push({ index: parseInt(m[1], 10), value: parseInt(m[2], 10) });
+    }
+    return out;
+}
+
+function fparOnNotify(ev){
+    const v = new Uint8Array(ev.target.value.buffer);
+    if (v.length >= 2 && v[0] === 0xFC && FPAR.waiter) { const w = FPAR.waiter; FPAR.waiter = null; w(v); }
+}
+function fparWaitReply(ms){
+    return new Promise((res, rej) => {
+        const t = setTimeout(() => { if (FPAR.waiter) { FPAR.waiter = null; rej(new Error('timeout risposta 0xFC')); } }, ms);
+        FPAR.waiter = v => { clearTimeout(t); res(v); };
+    });
+}
+async function fparCmd(bytes, ms = 10000){
+    const p = fparWaitReply(ms);
+    await FPAR.char.writeValueWithResponse(Uint8Array.from(bytes));
+    return p;
+}
+
+async function fparConnect(){
+    FPAR.device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'wazlley' }], optionalServices: [OTA_SERVICE_UUID],
+    });
+    FPAR.device.addEventListener('gattserverdisconnected', () => { FPAR.char = null; fparStatus(false, 'Disconnected'); });
+    FPAR.server = await FPAR.device.gatt.connect();
+    const svc = await FPAR.server.getPrimaryService(OTA_SERVICE_UUID);
+    FPAR.char = await svc.getCharacteristic(OTA_CHAR_UUID);
+    await FPAR.char.startNotifications();
+    FPAR.char.addEventListener('characteristicvaluechanged', fparOnNotify);
+    fparStatus(true, 'Connected: ' + FPAR.device.name);
+    await new Promise(r => setTimeout(r, 600));   // assestamento BLE
+}
+
+async function fparRestoreNode(node, params, label){
+    log(`${label} (node ${node}): ${params.length} parametri…`, 'FTD30');
+    let ok = 0, skip = 0;
+    for (let i = 0; i < params.length; i += FPAR_BATCH) {
+        const chunk = params.slice(i, i + FPAR_BATCH);
+        const pkt = [0xFC, 0x02, node, chunk.length];
+        for (const p of chunk) {
+            pkt.push(p.index & 0xFF, (p.index >> 8) & 0xFF,
+                     p.value & 0xFF, (p.value >> 8) & 0xFF, (p.value >> 16) & 0xFF, (p.value >> 24) & 0xFF);
+        }
+        const r = await fparCmd(pkt, 15000);
+        if (r.length >= 6 && r[1] === 0x02) { ok += r[2] | (r[3] << 8); skip += r[4] | (r[5] << 8); }
+        fparProgress((i + chunk.length) / params.length * 100);
+    }
+    log(`  ${label}: scritti ${ok}, saltati ${skip} (read-only/inesistenti)`, 'FTD30');
+    const sv = await fparCmd([0xFC, 0x03, node], 8000);
+    const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
+    log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
+    return { ok, skip, saveOk };
+}
+
+// Forza P21=0 (app FTD30 disabilitata) a prescindere dal file.
+function fparWithP21Zero(arr){
+    const c = arr.map(p => ({ ...p }));
+    const p21 = c.find(p => p.index === 21);
+    if (p21) p21.value = 0; else c.push({ index: 21, value: 0 });
+    return c;
+}
+
+async function fparRestoreAll(){
+    if (FPAR.busy) return;
+    if (!FPAR.master || !FPAR.slave) { log('Carica prima MASTER e SLAVE .prm', 'FTD30'); return; }
+    FPAR.busy = true; FQ('fparRestoreBtn').disabled = true;
+    try {
+        if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
+        fparProgress(0);
+        const r1 = await fparRestoreNode(1, fparWithP21Zero(FPAR.master), 'MASTER');
+        const r2 = await fparRestoreNode(2, fparWithP21Zero(FPAR.slave),  'SLAVE');
+        fparProgress(100);
+        const allOk = r1.saveOk && r2.saveOk;
+        log(`=== Ripristino FTD30 ${allOk ? 'COMPLETATO' : 'con avvisi'} (master ${r1.ok}w/${r1.skip}s, slave ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
+        fparStatus(allOk, allOk ? 'Completato ✓' : 'Completato con avvisi');
+        log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
+    } catch (e) {
+        log('Errore restore FTD30: ' + (e.message || e), 'FTD30');
+        fparStatus(false, 'Errore');
+    } finally {
+        FPAR.busy = false; FQ('fparRestoreBtn').disabled = false;
+    }
+}
+
+FQ('fparMasterFile').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    FPAR.master = fparParsePrm(await f.text());
+    FQ('fparMasterLabel').textContent = `✓ MASTER: ${f.name} (${FPAR.master.length} par)`;
+    FQ('fparRestoreBtn').disabled = !(FPAR.master && FPAR.slave);
+});
+FQ('fparSlaveFile').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    FPAR.slave = fparParsePrm(await f.text());
+    FQ('fparSlaveLabel').textContent = `✓ SLAVE: ${f.name} (${FPAR.slave.length} par)`;
+    FQ('fparRestoreBtn').disabled = !(FPAR.master && FPAR.slave);
+});
+FQ('fparRestoreBtn').addEventListener('click', fparRestoreAll);
 </script>
 
 </body>
