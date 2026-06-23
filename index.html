@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.2</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.3</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -305,7 +305,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.2 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.3 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2112,12 +2112,33 @@ function fparPrep(arr, node){
     return c;
 }
 
+// Legge un parametro da un nodo via 0xFC 04. Ritorna il valore o null (non risponde).
+async function fparReadParam(node, idx){
+    try {
+        const r = await fparCmd([0xFC, 0x04, node, idx & 0xFF, (idx >> 8) & 0xFF], 5000);
+        if (r.length >= 7 && r[1] === 0x04 && r[2] === 0)
+            return (r[3] | (r[4] << 8) | (r[5] << 16) | (r[6] << 24)) >>> 0;
+    } catch (e) { /* timeout -> null */ }
+    return null;
+}
+
 async function fparRestoreAll(){
     if (FPAR.busy) return;
     if (!FPAR.set) { log('Carica prima un set .prm', 'FTD30'); return; }
     FPAR.busy = true; FQ('fparRestoreBtn').disabled = true;
     try {
         if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
+        // PRE-CHECK: i due nodi rispondono e hanno id distinti?
+        fparStatus(true, 'Verifica nodi…');
+        const id1 = await fparReadParam(1, 1);   // DeviceID (P1) di node1
+        const id2 = await fparReadParam(2, 1);   // DeviceID (P1) di node2
+        log(`Pre-check: node1 DeviceID=${id1===null?'—':id1}, node2 DeviceID=${id2===null?'—':id2}`, 'FTD30');
+        if (id1 === null && id2 === null)
+            throw new Error('Nessun FTD30 risponde sul CAN — accesi? cavo collegato?');
+        if (id2 === null)
+            throw new Error('Nodo 2 non trovato: possibili DUE schede con lo stesso id=1. Collega/ribattezza una scheda alla volta.');
+        if (id1 === null)
+            throw new Error('Nodo 1 non trovato — controlla i DeviceID delle schede.');
         fparProgress(0);
         const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
         const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
