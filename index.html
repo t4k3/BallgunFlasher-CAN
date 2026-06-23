@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.6</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.7</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -285,7 +285,7 @@
             <button class="btn-update nextion" id="nbleConnectBtn">Connect &amp; Update (BLE)</button>
             <label class="file-pick" for="nbleFile" id="nbleFileLabel">…or pick custom .tft</label>
             <input type="file" id="nbleFile" accept=".tft" style="display:none;" />
-            <div class="chip-info" id="nbleDefaultLabel">Default: <code>NEXTION/canBusSquare.tft</code></div>
+            <div class="chip-info" id="nbleDefaultLabel">🔎 modello <b>auto-rilevato</b> dal display · la selezione qui sopra è solo fallback/override</div>
             <div class="progress" id="nbleProgress"><div class="progress-bar nextion" id="nbleProgressBar"></div></div>
             <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
@@ -315,7 +315,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.6 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.7 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1619,7 +1619,7 @@ function nbleRefreshModelUI() {
     const tft = nbleSelectedTft();
     const lbl = document.getElementById('nbleDefaultLabel');
     if (lbl && !nble.tftFile) {
-        lbl.innerHTML = `Default: <code>${tft.path}</code> (${tft.model})`;
+        lbl.innerHTML = `🔎 modello <b>auto-rilevato</b> dal display · fallback: <code>${tft.name}</code>`;
     }
     document.querySelectorAll('input[name="nbleModel"]').forEach(r => {
         r.parentElement.style.borderColor = r.checked ? '#ff9800' : '#444';
@@ -1824,7 +1824,7 @@ async function nbleRunUpdate(tftData) {
     const cbtn = document.getElementById('nbleConnectBtn');
     cbtn.disabled = true;
     nbleSetProgress(0);
-    log(`=== NEXTION BLE UPDATE: ${tftData.name} (${tftData.size} B / ${(tftData.size/1024).toFixed(2)} KB) ===`, 'NEXTION-BLE');
+    log(`=== NEXTION BLE UPDATE${tftData ? ': ' + tftData.name : ' (auto-detect modello)'} ===`, 'NEXTION-BLE');
     try {
         // 1) ENTER PASSTHROUGH (FE 03) — ACK is FE 03 00
         log('entering passthrough mode…', 'NEXTION-BLE');
@@ -1883,15 +1883,33 @@ async function nbleRunUpdate(tftData) {
             throw new Error(`no comok within 5 s. rxBuf: ${dump}`);
         }
         log(`Nextion at ${workingBaud}: ${comokText}`, 'NEXTION-BLE');
-        // Parse for fwVersion (selects whmi-wris flag like the USB path).
-        let detectedFw = null;
+        // Parse for fwVersion (selects whmi-wris flag like the USB path) + model.
+        let detectedFw = null, detectedModel = null;
         const parts = comokText.split(',');
         const mIdx = parts.findIndex(p => /^NX/i.test(p.trim()));
         if (mIdx > 0 && parts.length > mIdx + 1) {
-            const m = parts[mIdx].trim();
+            detectedModel = parts[mIdx].trim();
             const v = parseInt(parts[mIdx + 1], 10);
             if (!isNaN(v)) detectedFw = v;
-            log(`  Model: ${m}, fwVersion: ${isNaN(v) ? 'unknown' : v}`, 'NEXTION-BLE');
+            log(`  Model: ${detectedModel}, fwVersion: ${isNaN(v) ? 'unknown' : v}`, 'NEXTION-BLE');
+        }
+
+        // AUTO-DETECT del .tft dal modello (come il fleet). Se nessun file custom:
+        // NX4827 -> square, NX4848E021 -> round 2.1", NX4848(E028) -> round 2.8".
+        // Se il comok non riporta un modello noto, fallback alla selezione manuale (radio).
+        if (!tftData) {
+            const mu = (detectedModel || '').toUpperCase();
+            const key = mu.includes('NX4827') ? 'square'
+                      : mu.includes('NX4848E021') ? 'roundsmall'
+                      : mu.includes('NX4848') ? 'circle' : null;
+            const tft = key ? NEXTION_TFTS[key] : nbleSelectedTft();
+            log(key ? `auto-detect: ${detectedModel} → ${tft.name}`
+                    : `modello non rilevato (${comokText}) → uso selezione manuale: ${tft.name}`, 'NEXTION-BLE');
+            const r = await fetch(`${FIRMWARE_BASE}/${tft.path}?cb=${Date.now()}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status} scaricando ${tft.name}`);
+            const ab = await r.arrayBuffer();
+            tftData = { data: new Uint8Array(ab), size: ab.byteLength, name: tft.name };
+            log(`scaricato ${tft.name}: ${ab.byteLength} B (${(ab.byteLength/1024).toFixed(2)} KB)`, 'NEXTION-BLE');
         }
         nble.rxBuf = new Uint8Array(0);
 
@@ -2009,19 +2027,12 @@ document.getElementById('nbleConnectBtn').addEventListener('click', async () => 
     try {
         const connected = await nbleConnect();
         if (!connected) return;
-        let tftData;
+        // tftData = null -> auto-detect del modello dal comok (dentro nbleRunUpdate).
+        // Solo un file .tft caricato a mano fa da override.
+        let tftData = null;
         if (nble.tftFile) {
             const buf = await nble.tftFile.arrayBuffer();
             tftData = { data: new Uint8Array(buf), size: buf.byteLength, name: nble.tftFile.name };
-        } else {
-            const tft = nbleSelectedTft();
-            const url = `${FIRMWARE_BASE}/${tft.path}?cb=${Date.now()}`;
-            log(`downloading ${tft.name} (${tft.model})…`, 'NEXTION-BLE');
-            const r = await fetch(url);
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const ab = await r.arrayBuffer();
-            log(`downloaded ${ab.byteLength} B (${(ab.byteLength/1024).toFixed(2)} KB)`, 'NEXTION-BLE');
-            tftData = { data: new Uint8Array(ab), size: ab.byteLength, name: tft.name };
         }
         await nbleRunUpdate(tftData);
     } catch (e) {
