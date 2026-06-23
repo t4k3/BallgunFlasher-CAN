@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.4</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.5</title>
 <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
@@ -305,7 +305,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.4 · Windows USB-fix utility</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.5 · Windows USB-fix utility</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2099,7 +2099,24 @@ async function fparRestoreNode(node, params, label){
     const sv = await fparCmd([0xFC, 0x03, node], 8000);
     const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
     log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
-    return { ok, skip, saveOk };
+    // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
+    const verifyOk = await fparVerifyNode(node, params, label);
+    return { ok, skip, saveOk, verifyOk };
+}
+
+// Parametri "stabili" di controllo (rileggono esattamente il valore scritto).
+const FPAR_VERIFY_IDX = [1, 21, 67, 78, 84, 200];
+async function fparVerifyNode(node, prepped, label){
+    let good = 0, bad = 0;
+    for (const idx of FPAR_VERIFY_IDX) {
+        const exp = prepped.find(p => p.index === idx);
+        if (!exp) continue;
+        const got = await fparReadParam(node, idx);
+        if (got !== null && (got & 0xFFFF) === (exp.value & 0xFFFF)) good++;
+        else { bad++; log(`  ⚠ ${label} P${idx}: atteso ${exp.value}, letto ${got === null ? '—' : got}`, 'FTD30'); }
+    }
+    log(`  ${label}: verifica ${good}/${good + bad} parametri-chiave OK`, 'FTD30');
+    return bad === 0;
 }
 
 // Prepara il set per un nodo: forza P1 (DeviceID) = numero nodo e P21 = 0.
@@ -2154,7 +2171,7 @@ async function fparGuidedRecovery(){
     fparProgress(100);
 
     log(`=== Ribattesimo COMPLETATO (master ${rm.ok}w/${rm.skip}s, slave ${rs.ok}w/${rs.skip}s) ===`, 'FTD30');
-    fparStatus(rm.saveOk && rs.saveOk, 'Ribattesimo ✓');
+    fparStatus(rm.saveOk && rs.saveOk && rm.verifyOk && rs.verifyOk, 'Ribattesimo ✓');
     alert('Fatto ✓\n\n3) COLLEGA TUTTO (master + slave) e spegni/riaccendi i FTD30 per applicare.');
     log('>>> Collega tutto + spegni/riaccendi i FTD30.', 'FTD30');
 }
@@ -2178,9 +2195,9 @@ async function fparRestoreAll(){
             const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
             const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
             fparProgress(100);
-            const allOk = r1.saveOk && r2.saveOk;
+            const allOk = r1.saveOk && r2.saveOk && r1.verifyOk && r2.verifyOk;
             log(`=== Ripristino COMPLETATO (node1 ${r1.ok}w/${r1.skip}s, node2 ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
-            fparStatus(allOk, allOk ? 'Completato ✓' : 'Completato con avvisi');
+            fparStatus(allOk, allOk ? 'Completato ✓ (verificato)' : 'Completato con AVVISI (vedi log)');
             log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
         } else {
             // ANOMALIA (id duplicati o un nodo mancante) -> sequenza guidata
