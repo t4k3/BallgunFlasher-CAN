@@ -3,135 +3,144 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.17</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.18</title>
 <style>
-    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    body { margin: 0; padding: 8px 12px; background: #1a1a2e; color: #eee; min-height: 100vh; font-size: 13px; }
-
-    .header-row { display: flex; align-items: center; gap: 12px; max-width: 1500px; margin: 0 auto 8px; }
-    h1 { color: #ffb74d; margin: 0; font-size: 1.25em; flex-shrink: 0; }
-    .subtitle { color: #888; font-size: 11px; flex: 1; }
-    .prod-banner {
-        background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 8px, #ffb300 8px, #ffb300 16px);
-        padding: 2px; border-radius: 4px;
+    :root {
+        color-scheme: dark;
+        --bg:#070912; --surface:#111522; --surface-2:#171c2b; --surface-3:#1d2334;
+        --text:#f7f8fc; --muted:#929bb0; --muted-2:#687188;
+        --orange:#ff7a1a; --orange-strong:#ff9a45; --orange-glow:rgba(255,122,26,.22);
+        --cyan:#22d3ee; --cyan-strong:#67e8f9; --cyan-glow:rgba(34,211,238,.17);
+        --ok:#2dd4a3; --err:#fb7185; --warn:#fbbf24;
+        --border:#2a3145; --border-soft:rgba(148,163,184,.13);
     }
-    .prod-banner-inner {
-        background: #1a1a2e; padding: 4px 10px; border-radius: 3px;
-        font-weight: 700; font-size: 11px; color: #ffb300; letter-spacing: 0.3px;
+    * { box-sizing:border-box; }
+    html { min-height:100%; background:var(--bg); }
+    body {
+        margin:0; min-height:100vh; padding:18px 20px 26px; color:var(--text);
+        font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+        font-size:14px; line-height:1.4;
+        background:
+            radial-gradient(circle at 8% 0%,rgba(255,122,26,.14),transparent 34rem),
+            radial-gradient(circle at 92% 8%,rgba(34,211,238,.09),transparent 32rem),
+            linear-gradient(180deg,#090b15 0%,var(--bg) 60%);
     }
-    .prod-banner-inner .small { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; }
-
-    .main-container { max-width: 1500px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
-
-    /* New layout: 3 columns side-by-side.
-       Col 1 = USB-cable panels (stacked).
-       Col 2 = BLE panels (stacked).
-       Col 3 = Console (full vertical). */
-    .workspace {
-        display: grid;
-        grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) minmax(360px, 1.4fr);
-        gap: 8px;
-        align-items: start;
+    body::before {
+        content:""; position:fixed; inset:0; pointer-events:none; opacity:.2;
+        background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+                         linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+        background-size:38px 38px; mask-image:linear-gradient(to bottom,black,transparent 82%);
     }
-    .panel-col { display: flex; flex-direction: column; gap: 8px; }
-    .col-title {
-        font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px;
-        padding: 0 4px;
+    .header-row { position:relative; display:flex; align-items:center; gap:13px; max-width:1580px; margin:0 auto 14px; }
+    .brand-mark {
+        width:44px; height:44px; display:grid; place-items:center; flex:none;
+        border:1px solid rgba(255,154,69,.48); border-radius:13px;
+        background:linear-gradient(145deg,rgba(255,122,26,.25),rgba(34,211,238,.08));
+        box-shadow:0 10px 28px var(--orange-glow),inset 0 1px rgba(255,255,255,.14);
+        color:#fff4e8; font-size:13px; font-weight:800;
     }
-    .col-title.usb { color: #ffb74d; }
-    .col-title.ble { color: #ce93d8; }
-    .device-panel { background: #252540; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; }
-    .device-panel h2 {
-        margin: 0 0 6px 0; font-size: 0.95em; display: flex; align-items: center; gap: 6px;
-        line-height: 1.2;
+    .header-copy { min-width:0; flex:1; }
+    h1 { margin:0 0 2px; color:var(--text); font-size:22px; font-weight:760; letter-spacing:-.03em; }
+    .subtitle { color:var(--muted); font-size:12px; }
+    .prod-banner { padding:1px; border:1px solid rgba(255,122,26,.42); border-radius:10px; background:rgba(255,122,26,.08); }
+    .prod-banner-inner { padding:7px 11px; color:var(--orange-strong); font-size:11px; font-weight:780; letter-spacing:.05em; }
+    .prod-banner-inner .small { margin-left:7px; color:var(--muted); font-size:10px; font-weight:500; letter-spacing:0; }
+    .main-container { position:relative; max-width:1580px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
+    .workspace { display:grid; grid-template-columns:minmax(280px,1fr) minmax(280px,1fr) minmax(380px,1.35fr); gap:12px; align-items:start; }
+    .panel-col { display:flex; flex-direction:column; gap:10px; }
+    .col-title { padding:0 5px 2px; color:var(--muted); font-size:11px; font-weight:780; letter-spacing:.12em; text-transform:uppercase; }
+    .col-title.usb { color:var(--orange-strong); }
+    .col-title.ble { color:var(--cyan-strong); }
+    .device-panel {
+        position:relative; overflow:hidden; display:flex; flex-direction:column; padding:13px 14px;
+        border:1px solid var(--border); border-radius:14px;
+        background:linear-gradient(145deg,rgba(23,28,43,.96),rgba(13,17,28,.96));
+        box-shadow:0 16px 42px rgba(0,0,0,.24);
     }
-    .device-panel h2 .sub { font-size: 0.7em; opacity: 0.6; font-weight: 400; }
-    .device-panel.standalone h2 { color: #ffb74d; }
-    .device-panel.nextion   h2 { color: #ff9800; }
-    .device-panel.pinscan   h2 { color: #81d4fa; }
-    .device-panel.ftd30     h2 { color: #66bb6a; }
-    .device-panel.ota       h2 { color: #ce93d8; }
-    .device-panel svg { width: 16px; height: 16px; }
-
-    .status {
-        display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
-        padding: 4px 8px; background: #1a1a2e; border-radius: 4px; font-size: 11px;
+    .device-panel::before { content:""; position:absolute; left:0; top:0; width:100%; height:2px; background:var(--orange); opacity:.75; }
+    .panel-col:nth-child(2) .device-panel::before { background:var(--cyan); }
+    .device-panel h2 { display:flex; align-items:center; gap:7px; margin:0 0 9px; color:var(--text); font-size:14px; line-height:1.25; }
+    .device-panel h2 .sub { color:var(--muted); font-size:10px; font-weight:500; }
+    .device-panel.standalone h2,.device-panel.nextion h2 { color:#fff1e6; }
+    .panel-col:nth-child(2) .device-panel h2,.device-panel.pinscan h2 { color:#e6fcff; }
+    .device-panel.ftd30 h2 { color:var(--text); }
+    .device-panel svg { width:17px; height:17px; flex:none; }
+    .status { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:7px 9px;
+              border:1px solid var(--border-soft); border-radius:8px; background:rgba(7,10,17,.58); color:var(--muted); font-size:12px; }
+    .status-dot { width:8px; height:8px; flex:none; border-radius:50%; background:var(--err); box-shadow:0 0 0 4px rgba(251,113,133,.08); }
+    .status-dot.connected { background:var(--ok); box-shadow:0 0 0 4px rgba(45,212,163,.1); }
+    button { width:100%; min-height:36px; margin-bottom:6px; padding:8px 10px; border:1px solid transparent; border-radius:9px;
+             color:var(--text); font:inherit; font-size:12px; font-weight:700; cursor:pointer;
+             transition:transform .15s ease,background .15s ease,border-color .15s ease,box-shadow .15s ease,opacity .15s ease; }
+    button:hover:not(:disabled) { transform:translateY(-1px); }
+    button:focus-visible,.file-pick:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    button:disabled { opacity:.38; cursor:not-allowed; box-shadow:none; }
+    .btn-connect { border-color:var(--border); background:var(--surface-2); color:#dce1ec; }
+    .btn-connect:hover:not(:disabled) { border-color:#46516d; background:var(--surface-3); }
+    .btn-connect.connected { border-color:rgba(45,212,163,.4); background:rgba(45,212,163,.12); color:var(--ok); }
+    .btn-update { min-height:40px; padding:9px 11px; font-size:13px; }
+    .btn-update.standalone,.btn-update.nextion,.btn-update.ftd30-master {
+        background:linear-gradient(135deg,var(--orange),#dc5c06); color:#fff; box-shadow:0 9px 24px var(--orange-glow);
     }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff5252; flex-shrink: 0; }
-    .status-dot.connected { background: #00c853; }
-
-    button {
-        width: 100%; padding: 7px; font-size: 12px; font-weight: 600;
-        border: none; border-radius: 5px; cursor: pointer; margin-bottom: 4px;
-        transition: opacity 0.15s, transform 0.15s;
+    .panel-col:nth-child(2) .btn-update.nextion,.btn-update.pinscan,.btn-update.ftd30-slave,.btn-update.ota {
+        background:linear-gradient(135deg,var(--cyan),#0e9fb6); color:#041318; box-shadow:0 9px 24px var(--cyan-glow);
     }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-connect { background: #3a3a55; color: white; }
-    .btn-connect:hover:not(:disabled) { background: #46466a; }
-    .btn-connect.connected { background: #00c853; }
-    .btn-update { color: #1a1a2e; font-size: 13px; padding: 9px; font-weight: 700; }
-    .btn-update.standalone   { background: linear-gradient(135deg, #ffb74d, #ff9800); }
-    .btn-update.nextion      { background: linear-gradient(135deg, #ff9800, #f57c00); color: white; }
-    .btn-update.pinscan      { background: linear-gradient(135deg, #81d4fa, #29b6f6); }
-    .btn-update.ftd30-master { background: linear-gradient(135deg, #66bb6a, #2e7d32); color: white; }
-    .btn-update.ftd30-slave  { background: linear-gradient(135deg, #4dd0e1, #00838f); color: white; }
-    .btn-update.ota          { background: linear-gradient(135deg, #ab47bc, #7b1fa2); color: white; }
-    .btn-update:hover:not(:disabled) { opacity: 0.92; transform: scale(1.005); }
-
-    .progress { width: 100%; height: 4px; background: #1a1a2e; border-radius: 2px; overflow: hidden; margin-top: 4px; display: none; }
-    .progress-bar { height: 100%; width: 0%; transition: width 0.3s; }
-    .progress-bar.standalone { background: linear-gradient(90deg, #ffb74d, #ffd180); }
-    .progress-bar.nextion    { background: linear-gradient(90deg, #ff9800, #ffcc80); }
-    .progress-bar.pinscan    { background: linear-gradient(90deg, #81d4fa, #b3e5fc); }
-    .progress-bar.ota        { background: linear-gradient(90deg, #ab47bc, #ce93d8); }
-
-    /* Compact radio model picker */
-    .model-picker { display: flex; gap: 4px; margin: 4px 0; }
-    .model-picker label {
-        flex: 1; cursor: pointer; padding: 4px 6px;
-        background: #1a1a2e; border: 1.5px solid #444; border-radius: 5px;
-        text-align: center; font-size: 11px; line-height: 1.2;
+    .btn-update:hover:not(:disabled) { box-shadow:0 12px 30px var(--orange-glow); }
+    .panel-col:nth-child(2) .btn-update:hover:not(:disabled),.btn-update.ota:hover:not(:disabled) { box-shadow:0 12px 30px var(--cyan-glow); }
+    .progress { display:none; width:100%; height:6px; overflow:hidden; margin:4px 0 2px; border-radius:999px; background:#070a11; }
+    .progress-bar { height:100%; width:0%; border-radius:inherit; transition:width .3s; }
+    .progress-bar.standalone,.progress-bar.nextion { background:linear-gradient(90deg,var(--orange),var(--cyan)); }
+    .progress-bar.pinscan,.progress-bar.ota { background:linear-gradient(90deg,var(--cyan),var(--orange)); }
+    .model-picker { display:flex; gap:5px; margin:0 0 7px; }
+    .model-picker label { flex:1; padding:6px 5px; border:1px solid var(--border); border-radius:8px;
+                          background:rgba(7,10,17,.5); color:var(--muted); cursor:pointer; text-align:center; font-size:11px; line-height:1.25; }
+    .model-picker label.active { border-color:var(--orange); background:rgba(255,122,26,.09); color:var(--text); }
+    .model-picker input { margin-right:3px; accent-color:var(--orange); vertical-align:middle; }
+    .model-picker .name { font-weight:720; }
+    .model-picker .spec { display:block; margin-top:2px; color:var(--muted-2); font-size:9px; }
+    .file-pick { display:inline-block; margin:1px 0 2px; color:var(--muted); cursor:pointer; font-size:11px; text-decoration:none; }
+    .file-pick:hover { color:var(--cyan-strong); }
+    .chip-info { margin-top:3px; color:var(--muted-2); font-size:11px; line-height:1.35; }
+    .chip-info code { color:var(--muted); }
+    .mac-readout { margin-top:3px; color:#cbd2e1; font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
+    .console-section { display:flex; flex-direction:column; min-height:100%; padding:13px 14px;
+                       border:1px solid var(--border); border-radius:14px; background:rgba(11,15,25,.82);
+                       box-shadow:0 16px 42px rgba(0,0,0,.24); }
+    .console-section h2 { margin:0 0 9px; color:var(--cyan-strong); font-size:12px; font-weight:760; letter-spacing:.08em; text-transform:uppercase; }
+    #console { flex:1; min-height:390px; max-height:700px; overflow-y:auto; padding:11px 12px;
+               border:1px solid var(--border-soft); border-radius:10px; background:#05070d; color:#cbd2e1;
+               font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; word-break:break-all; }
+    .footer-row { display:flex; align-items:center; gap:18px; max-width:1580px; margin:0 auto; padding:4px 5px;
+                  color:var(--muted-2); font-size:11px; flex-wrap:wrap; }
+    .footer-row code { color:var(--muted); font-size:11px; }
+    .footer-row a { color:var(--cyan-strong); text-decoration:none; font-size:11px; font-weight:700; }
+    .footer-row a.usb-fix-link { color:var(--orange-strong); font-weight:500; }
+    .warning { max-width:1580px; margin:0 auto 10px; padding:10px 12px; border:1px solid rgba(251,191,36,.4);
+               border-radius:10px; background:rgba(91,60,7,.24); color:#fde5a5; text-align:center; font-size:12px; }
+    @media (max-width:1150px) {
+        .workspace { grid-template-columns:1fr 1fr; }
+        .console-section { grid-column:1/-1; min-height:360px; }
     }
-    .model-picker label.active { border-color: #ff9800; }
-    .model-picker input { margin-right: 4px; vertical-align: middle; }
-    .model-picker .name { font-weight: 700; }
-    .model-picker .spec { font-size: 9px; color: #888; display: block; }
-
-    .file-pick { font-size: 10px; color: #999; cursor: pointer; text-decoration: underline; margin-top: 4px; display: inline-block; }
-    .chip-info { font-size: 10px; color: #777; margin-top: 4px; line-height: 1.3; }
-    .mac-readout { font-family: 'Monaco', 'Menlo', monospace; font-size: 10px; color: #ccc; margin-top: 3px; word-break: break-all; }
-
-    .console-section { background: #252540; border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; }
-    .console-section h2 { margin: 0 0 4px 0; color: #888; font-size: 0.85em; font-weight: 600; }
-    #console {
-        background: #0d0d1a; border-radius: 5px; padding: 8px 10px;
-        flex: 1; min-height: 320px; max-height: 560px; overflow-y: scroll;
-        font-family: 'Monaco', 'Menlo', monospace; font-size: 10px;
-        line-height: 1.35; white-space: pre-wrap; word-break: break-all;
+    @media (max-width:740px) {
+        body { padding:14px 12px 24px; }
+        .header-row { align-items:flex-start; flex-wrap:wrap; }
+        .brand-mark { width:40px; height:40px; }
+        .prod-banner { width:100%; }
+        .workspace { grid-template-columns:1fr; }
+        .console-section { grid-column:auto; }
+        .footer-row { gap:9px 14px; }
     }
-
-    .footer-row {
-        display: flex; justify-content: space-between; align-items: center;
-        font-size: 10px; color: #666; padding: 0 4px; max-width: 1500px; margin: 0 auto;
-    }
-    .footer-row code { color: #888; font-size: 10px; }
-
-    .warning { background: #ff6b3520; border: 1px solid #ff6b35; border-radius: 6px; padding: 8px; margin-bottom: 8px; text-align: center; font-size: 12px; }
-
-    @media (max-width: 1100px) {
-        .workspace { grid-template-columns: 1fr 1fr; }
-        .console-section { grid-column: 1 / -1; }
-    }
-    @media (max-width: 700px) {
-        .workspace { grid-template-columns: 1fr; }
-    }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; animation:none!important; } }
 </style>
 </head>
 <body>
 
 <div class="header-row">
-    <h1>Ballgun CAN Flasher</h1>
-    <span class="subtitle">ESP32-C6 + CANopen CiA 402 FTD30</span>
+    <div class="brand-mark" aria-hidden="true">V12</div>
+    <div class="header-copy">
+        <h1>Ballgun CAN Flasher</h1>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console</div>
+    </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
     </div>
@@ -216,7 +225,7 @@
             </div>
             <button class="btn-connect" id="ftd30ConnectBtn">Connect FTDI</button>
             <div style="margin: 4px 0; display:flex; gap:6px; align-items:center; font-size:11px;">
-                <label>Current ID <input type="number" id="ftd30CurrentId" value="1" min="1" max="247" style="width:50px; padding:2px 4px; background:#1a1a2e; color:#eee; border:1px solid #444; border-radius:3px; margin-left:4px; font-size:11px;"></label>
+                <label>Current ID <input type="number" id="ftd30CurrentId" value="1" min="1" max="247" style="width:50px; padding:2px 4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:3px; margin-left:4px; font-size:11px;"></label>
             </div>
             <button class="btn-update ftd30-master" id="ftd30MasterBtn" disabled>Flash MASTER (id=1)</button>
             <button class="btn-update ftd30-slave"  id="ftd30SlaveBtn"  disabled>Flash SLAVE (id=2)</button>
@@ -316,13 +325,13 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.17 · IDF 6.1 / firmware V12.1.0</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.18 · IDF 6.1 / firmware V12.1.0</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
-        <span><a href="fleet.html" style="color:#a855f7; text-decoration:none; font-size:11px; font-weight:700;"
+        <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
         <span style="margin-left:auto;">
             <a href="tools/windows-usb-fix.bat" download
-               style="color:#ff9800; text-decoration:none; font-size:11px;"
+               class="usb-fix-link"
                title="Scarica questo se il flasher non vede la scheda su Windows">
                🪟 Windows: scheda non rilevata?
             </a>
