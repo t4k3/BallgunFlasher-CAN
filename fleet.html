@@ -6,150 +6,217 @@
 <title>Ballgun Fleet Update (internal)</title>
 <style>
   :root {
-    --bg:#0b0b10; --card:#16161e; --text:#f3f3f5; --muted:#9aa0aa;
-    --accent:#a855f7; --accent-dark:#8b3fd6; --ok:#10b981; --err:#ef4444;
-    --warn:#f59e0b; --border:#262630; --row:#1a1a25;
+    color-scheme:dark;
+    --bg:#070912; --surface:#111522; --surface-2:#171c2b; --surface-3:#1d2334;
+    --text:#f7f8fc; --muted:#929bb0; --muted-2:#687188;
+    --accent:#ff7a1a; --accent-strong:#ff9a45; --accent-glow:rgba(255,122,26,.24);
+    --cyan:#22d3ee; --ok:#2dd4a3; --err:#fb7185; --warn:#fbbf24;
+    --border:#2a3145; --border-soft:rgba(148,163,184,.13);
+    --shadow:0 24px 70px rgba(0,0,0,.32);
   }
   * { box-sizing:border-box; }
-  html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; min-height:100vh; }
-  .wrap { max-width:760px; margin:0 auto; padding:28px 18px 80px; }
-  header { margin-bottom:22px; }
-  h1 { font-size:24px; margin:0 0 4px; font-weight:700; }
-  h1 .ver { font-size:13px; font-weight:600; color:var(--muted); margin-left:8px; }
-  .subtitle { color:var(--muted); font-size:13px; margin:0; }
-  .target { background:var(--card); border:1px solid var(--border); border-radius:12px;
-    padding:14px 16px; margin:18px 0; display:flex; align-items:baseline; justify-content:space-between; }
-  .target .label { font-size:13px; color:var(--muted); }
-  .target .value { font-size:20px; font-weight:700; color:var(--accent); }
-  .bar { display:flex; gap:10px; margin:16px 0; flex-wrap:wrap; }
-  button {
-    padding:12px 18px; font-size:15px; font-weight:700; border:none; border-radius:10px;
-    cursor:pointer; transition:background .15s ease, opacity .15s ease;
+  html { min-height:100%; background:var(--bg); }
+  body {
+    margin:0; min-height:100vh; color:var(--text);
+    font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:16px; line-height:1.45;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(255,122,26,.16), transparent 34rem),
+      radial-gradient(circle at 88% 12%, rgba(34,211,238,.09), transparent 30rem),
+      linear-gradient(180deg,#090b15 0%,var(--bg) 55%);
   }
-  button.primary { background:var(--accent); color:#fff; flex:1; min-width:180px; }
-  button.primary:hover:not(:disabled) { background:var(--accent-dark); }
-  button.ghost { background:var(--row); color:var(--text); border:1px solid var(--border); }
-  button.small { padding:7px 12px; font-size:13px; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  .modebar { display:flex; align-items:center; gap:8px; margin:14px 0 2px; flex-wrap:wrap; }
-  .modelabel { font-size:13px; color:var(--muted); }
-  .modebtn { padding:7px 14px; font-size:13px; font-weight:700; border-radius:8px;
-    background:var(--row); color:var(--muted); border:1px solid var(--border); }
-  .modebtn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  body::before {
+    content:""; position:fixed; inset:0; pointer-events:none; opacity:.22;
+    background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+    background-size:38px 38px; mask-image:linear-gradient(to bottom,black,transparent 78%);
+  }
+  .wrap { position:relative; max-width:1040px; margin:0 auto; padding:44px 24px 88px; }
+  header { display:flex; align-items:center; gap:16px; margin-bottom:26px; }
+  .brand-mark {
+    width:54px; height:54px; display:grid; place-items:center; flex:none;
+    border:1px solid rgba(255,154,69,.5); border-radius:16px;
+    background:linear-gradient(145deg,rgba(255,122,26,.26),rgba(34,211,238,.08));
+    box-shadow:0 12px 32px var(--accent-glow),inset 0 1px rgba(255,255,255,.14);
+    color:#fff4e8; font-weight:800; font-size:15px; letter-spacing:-.03em;
+  }
+  .header-copy { min-width:0; }
+  h1 { display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:30px; letter-spacing:-.035em; margin:0 0 3px; font-weight:760; }
+  h1 .ver { margin:0; padding:4px 9px; border:1px solid var(--border); border-radius:999px;
+            background:rgba(17,21,34,.74); color:var(--muted); font-size:12px; font-weight:700; letter-spacing:0; }
+  .subtitle { color:var(--muted); font-size:14px; margin:0; }
+  .target-grid { display:grid; grid-template-columns:1.1fr .9fr; gap:12px; margin:0 0 12px; }
+  .target {
+    position:relative; overflow:hidden; min-height:104px; display:flex; flex-direction:column;
+    justify-content:space-between; gap:14px; padding:18px 20px;
+    background:linear-gradient(145deg,rgba(23,28,43,.96),rgba(13,17,28,.96));
+    border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
+  }
+  .target::after { content:""; position:absolute; left:0; top:0; width:100%; height:2px;
+                   background:linear-gradient(90deg,var(--accent),var(--cyan),transparent 82%); opacity:.8; }
+  .target .label { color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+  .target .value { color:var(--text); font-size:24px; line-height:1.15; font-weight:760; letter-spacing:-.025em; }
+  .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:12px 0 28px; }
+  .chip {
+    display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+    padding:12px 14px; border:1px solid var(--border-soft); border-radius:13px;
+    background:rgba(17,21,34,.7); color:var(--muted); font-size:13px; backdrop-filter:blur(12px);
+  }
+  .chip b { color:var(--text); font-size:19px; font-variant-numeric:tabular-nums; }
+  .chip.ok b { color:var(--ok); } .chip.old b { color:var(--warn); }
+  h2.sec { display:flex; align-items:baseline; flex-wrap:wrap; gap:5px; color:#c5ccdc;
+           margin:26px 0 10px; font-size:13px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; }
+  h2.sec .hint { color:var(--muted-2); font-size:12px; font-weight:500; letter-spacing:0; text-transform:none; }
+  .controls {
+    padding:16px; margin-bottom:12px; background:rgba(17,21,34,.72); border:1px solid var(--border);
+    border-radius:18px; box-shadow:0 18px 50px rgba(0,0,0,.22); backdrop-filter:blur(16px);
+  }
+  .modebar { display:flex; align-items:center; gap:7px; margin:0 0 14px; flex-wrap:wrap; }
+  .modelabel { margin-right:4px; color:var(--muted); font-size:13px; font-weight:650; }
+  .bar { display:grid; grid-template-columns:minmax(210px,1fr) repeat(4,auto); gap:8px; margin:0; }
+  button {
+    min-height:42px; padding:10px 15px; border:1px solid transparent; border-radius:11px;
+    font:inherit; font-size:14px; font-weight:700; color:var(--text); cursor:pointer;
+    transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease,opacity .16s ease;
+  }
+  button:hover:not(:disabled) { transform:translateY(-1px); }
+  button:focus-visible,#search:focus-visible,summary:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+  button.primary { background:linear-gradient(135deg,var(--accent),#6d48e5); color:#fff; box-shadow:0 10px 28px var(--accent-glow); }
+  button.primary:hover:not(:disabled) { box-shadow:0 14px 34px rgba(255,122,26,.34); }
+  button.ghost { background:var(--surface-2); color:#dce1ec; border-color:var(--border); }
+  button.ghost:hover:not(:disabled) { background:var(--surface-3); border-color:#424c67; }
+  button.small { min-height:34px; padding:6px 11px; font-size:12px; }
+  button:disabled { opacity:.38; cursor:not-allowed; box-shadow:none; }
+  .modebtn { min-height:34px; padding:6px 13px; background:transparent; color:var(--muted); border-color:var(--border); font-size:12px; }
+  .modebtn.active { color:#fff; border-color:rgba(255,154,69,.82); background:rgba(255,122,26,.18); box-shadow:inset 0 0 0 1px rgba(255,154,69,.14); }
   .device {
-    background:var(--row); border:1px solid var(--border); border-radius:12px;
-    padding:14px 16px; margin-bottom:10px;
+    padding:16px 18px; margin-bottom:10px; background:linear-gradient(145deg,var(--surface-2),#121725);
+    border:1px solid var(--border); border-radius:15px; box-shadow:0 12px 32px rgba(0,0,0,.18);
   }
   .device-head { display:flex; align-items:center; gap:12px; }
-  .device-name { font-weight:700; font-size:15px; font-variant-numeric:tabular-nums; }
-  .device-state { margin-left:auto; font-size:13px; color:var(--muted); display:flex; align-items:center; gap:8px; }
-  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); flex:none; }
-  .dot.idle { background:#6b7280; }
-  .dot.run  { background:var(--accent); animation:pulse 1s infinite; }
-  .dot.ok   { background:var(--ok); }
-  .dot.err  { background:var(--err); }
-  .dot.warn { background:var(--warn); }
-  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
-  .device-prog { height:8px; background:#10101a; border-radius:5px; overflow:hidden; margin-top:10px; }
-  .device-prog > div { height:100%; width:0%; background:var(--accent); transition:width .2s ease; }
-  .device-msg { font-size:12px; color:var(--muted); margin-top:6px; min-height:14px; }
-  .device input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); }
-  .empty { color:var(--muted); font-size:14px; text-align:center; padding:26px 0; }
-  .warnbox { background:#2a1a0a; border:1px solid #6b3a1a; color:#f5c98b;
-    padding:12px 14px; border-radius:10px; font-size:13px; margin-bottom:16px; line-height:1.5; }
-  details { margin-top:18px; font-size:13px; color:var(--muted); }
-  summary { cursor:pointer; user-select:none; }
-  pre.log { background:#0a0a10; color:#c8c9d0; padding:12px; border-radius:8px;
-    max-height:260px; overflow:auto; font-size:11px;
-    font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; margin:8px 0 0; }
-  footer { color:var(--muted); font-size:12px; margin-top:26px; text-align:center; }
-  a { color:var(--accent); }
-  /* riepilogo + registro compatto (scala a centinaia di macchine) */
-  .summary { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 6px; }
-  .chip { background:var(--card); border:1px solid var(--border); border-radius:20px;
-          padding:6px 12px; font-size:13px; color:var(--muted); }
-  .chip b { color:var(--text); font-variant-numeric:tabular-nums; }
-  .chip.ok b { color:var(--ok); }  .chip.old b { color:var(--warn); }
-  h2.sec { font-size:13px; text-transform:uppercase; letter-spacing:.04em;
-           color:var(--muted); margin:22px 0 8px; font-weight:700; }
-  h2.sec .hint { text-transform:none; letter-spacing:0; font-weight:400; font-size:12px; }
-  .regtools { display:flex; gap:10px; align-items:center; margin:8px 0; flex-wrap:wrap; }
-  #search { flex:1; min-width:160px; padding:9px 12px; background:#10101a;
-            border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; }
-  .regtools label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
-  .regtools input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); }
-  .registry-list { max-height:380px; overflow:auto; border:1px solid var(--border); border-radius:10px; }
-  .reg-row { display:flex; align-items:center; gap:10px; padding:7px 12px;
-             border-bottom:1px solid #1d1d27; font-size:13px; }
+  .device-name { font-size:15px; font-weight:750; font-variant-numeric:tabular-nums; letter-spacing:.01em; }
+  .device-state { display:flex; align-items:center; gap:8px; margin-left:auto; color:var(--muted); font-size:13px; }
+  .dot,.reg-row .rdot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--muted-2); box-shadow:0 0 0 4px rgba(104,113,136,.1); }
+  .dot.idle { background:#7c879f; }
+  .dot.run { background:var(--accent-strong); box-shadow:0 0 0 5px var(--accent-glow); animation:pulse 1s infinite; }
+  .dot.ok,.reg-row .rdot.ok { background:var(--ok); box-shadow:0 0 0 4px rgba(45,212,163,.1); }
+  .dot.err { background:var(--err); box-shadow:0 0 0 4px rgba(251,113,133,.1); }
+  .dot.warn,.reg-row .rdot.old { background:var(--warn); box-shadow:0 0 0 4px rgba(251,191,36,.1); }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.45;transform:scale(.82)} }
+  .device-prog { height:7px; overflow:hidden; margin-top:13px; border-radius:999px; background:#090c14; }
+  .device-prog > div { height:100%; width:0%; border-radius:inherit; background:linear-gradient(90deg,var(--accent),var(--cyan)); transition:width .2s ease; }
+  .device-msg { min-height:15px; margin-top:7px; color:var(--muted); font-size:12px; }
+  .device input[type=checkbox],.regtools input[type=checkbox] { width:17px; height:17px; accent-color:var(--accent); }
+  .empty { color:var(--muted-2); font-size:14px; text-align:center; padding:24px 12px; }
+  .warnbox { padding:13px 15px; margin-bottom:16px; border:1px solid rgba(251,191,36,.34); border-radius:13px;
+             background:rgba(91,60,7,.25); color:#fde5a5; font-size:13px; line-height:1.55; }
+  .panel { padding:10px 14px; margin:8px 0 14px; background:rgba(17,21,34,.68); border:1px solid var(--border); border-radius:16px; }
+  .panel.current { border-color:rgba(255,154,69,.72); box-shadow:0 16px 42px var(--accent-glow); }
+  .panel.current .device { margin:0; border:0; background:transparent; box-shadow:none; }
+  details { overflow:hidden; margin-top:14px; color:var(--muted); background:rgba(17,21,34,.58);
+            border:1px solid var(--border-soft); border-radius:14px; backdrop-filter:blur(12px); }
+  summary { position:relative; padding:14px 44px 14px 16px; color:#d6dbea; cursor:pointer; user-select:none; font-size:14px; font-weight:680; list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  summary::after { content:"+"; position:absolute; right:16px; top:50%; transform:translateY(-50%); color:var(--accent-strong); font-size:20px; font-weight:400; }
+  details[open] summary { border-bottom:1px solid var(--border-soft); }
+  details[open] summary::after { content:"−"; }
+  details > .device-msg { padding:0 16px; margin-top:12px; }
+  details > .panel,details > .registry-list,details > .regtools,details > pre { margin-left:12px; margin-right:12px; }
+  pre.log { max-height:300px; overflow:auto; margin-top:12px; padding:14px; border:1px solid var(--border-soft); border-radius:11px;
+            background:#070a11; color:#cbd2e1; font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; }
+  .regtools { display:flex; align-items:center; gap:12px; margin-top:12px; margin-bottom:10px; flex-wrap:wrap; }
+  #search { flex:1; min-width:190px; padding:10px 12px; color:var(--text); background:#0b0f19;
+            border:1px solid var(--border); border-radius:10px; font:inherit; font-size:13px; }
+  #search::placeholder { color:var(--muted-2); }
+  .regtools label { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:13px; }
+  .registry-list { max-height:390px; overflow:auto; margin-bottom:12px; border:1px solid var(--border-soft); border-radius:11px; background:rgba(7,10,17,.3); }
+  .reg-row { display:flex; align-items:center; gap:11px; padding:10px 12px; border-bottom:1px solid var(--border-soft); font-size:13px; }
   .reg-row:last-child { border-bottom:none; }
-  .reg-row .rdot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--muted); }
-  .reg-row .rdot.ok { background:var(--ok); }  .reg-row .rdot.old { background:var(--warn); }
-  .reg-row .rs { font-weight:700; font-variant-numeric:tabular-nums; }
-  .reg-row .rg { font-size:11px; color:var(--accent); }
-  .reg-row .rv { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .reg-row .rt { color:var(--muted); font-size:11px; min-width:128px; text-align:right; }
-  .panel { background:var(--card); border:1px solid var(--border); border-radius:12px;
-           padding:12px; margin:8px 0 14px; }
-  .panel.current { border-color:var(--accent); }
-  .panel-title { display:flex; align-items:center; justify-content:space-between; gap:10px;
-                 margin-bottom:8px; font-size:13px; font-weight:700; }
-  .known-row,.result-row { display:flex; align-items:center; gap:10px; padding:9px 4px;
-                           border-bottom:1px solid var(--border); font-size:13px; }
+  .reg-row:hover { background:rgba(255,255,255,.025); }
+  .reg-row .rs { color:#e8ebf3; font-weight:720; font-variant-numeric:tabular-nums; }
+  .reg-row .rg { color:var(--accent-strong); font-size:11px; }
+  .reg-row .rv { margin-left:auto; color:#b9c1d3; font-variant-numeric:tabular-nums; }
+  .reg-row .rt { min-width:128px; color:var(--muted-2); font-size:11px; text-align:right; }
+  .known-row,.result-row { display:flex; align-items:center; gap:12px; padding:11px 3px; border-bottom:1px solid var(--border-soft); font-size:13px; }
   .known-row:last-child,.result-row:last-child { border-bottom:none; }
   .known-main,.result-main { min-width:0; flex:1; }
-  .known-name,.result-name { display:block; font-weight:700; font-variant-numeric:tabular-nums; }
-  .known-meta,.result-meta { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
-  .result-badge { font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px; }
-  .result-badge.ok { color:var(--ok); background:#0d2a22; }
-  .result-badge.err { color:var(--err); background:#321417; }
-  .result-badge.warn { color:var(--warn); background:#30210d; }
-  @media (max-width:560px) {
+  .known-name,.result-name { display:block; color:#e8ebf3; font-weight:720; font-variant-numeric:tabular-nums; }
+  .known-meta,.result-meta { display:block; margin-top:3px; color:var(--muted); font-size:12px; }
+  .result-badge { flex:none; padding:4px 9px; border:1px solid currentColor; border-radius:999px; font-size:10px; font-weight:800; letter-spacing:.04em; }
+  .result-badge.ok { color:var(--ok); background:rgba(45,212,163,.08); }
+  .result-badge.err { color:var(--err); background:rgba(251,113,133,.08); }
+  .result-badge.warn { color:var(--warn); background:rgba(251,191,36,.08); }
+  footer { margin-top:34px; color:var(--muted-2); font-size:12px; text-align:center; }
+  a { color:var(--accent-strong); }
+  @media (max-width:820px) {
+    .bar { grid-template-columns:1fr 1fr; }
+    .bar .primary { grid-column:1/-1; }
+  }
+  @media (max-width:640px) {
+    .wrap { padding:28px 15px 64px; }
+    header { align-items:flex-start; }
+    .brand-mark { width:46px; height:46px; border-radius:13px; }
+    h1 { font-size:24px; }
+    .target-grid,.summary { grid-template-columns:1fr; }
+    .target { min-height:88px; }
+    .bar { grid-template-columns:1fr; }
+    .bar .primary { grid-column:auto; }
+    .device-head { flex-wrap:wrap; }
+    .device-state { width:100%; margin-left:29px; }
     .reg-row .rt { display:none; }
     .known-row { align-items:flex-start; flex-wrap:wrap; }
     .known-row button { width:100%; }
+    h2.sec .hint { width:100%; }
   }
+  @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; } }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.0</span>
-        <span class="ver" id="verCheck"></span></h1>
-    <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
+    <div class="brand-mark" aria-hidden="true">V12</div>
+    <div class="header-copy">
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.1</span>
+          <span class="ver" id="verCheck"></span></h1>
+      <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
+    </div>
   </header>
 
   <div id="warnBox" class="warnbox" hidden></div>
 
-  <div class="target">
-    <span class="label">Firmware da installare</span>
-    <span class="value" id="targetVer">…</span>
-  </div>
+  <div class="target-grid">
+    <div class="target">
+      <span class="label">Firmware da installare</span>
+      <span class="value" id="targetVer">…</span>
+    </div>
 
-  <div class="target">
-    <span class="label">Display .tft (auto square/round)</span>
-    <span class="value" id="targetTft" style="font-size:15px;">…</span>
+    <div class="target">
+      <span class="label">Display .tft · riconoscimento automatico</span>
+      <span class="value" id="targetTft" style="font-size:15px;">…</span>
+    </div>
   </div>
 
   <div id="summary" class="summary"></div>
 
   <h2 class="sec">Coda di questa sessione (<span id="queueCount">0</span>) <span class="hint">— solo le macchine aggiunte per questo aggiornamento</span>
       <span id="sessionDone" style="color:var(--ok); font-weight:700;"></span></h2>
-  <div class="modebar" id="modeBar">
-    <span class="modelabel">Aggiorna:</span>
-    <button class="modebtn active" data-mode="firmware">Firmware</button>
-    <button class="modebtn" data-mode="display">Display</button>
-    <button class="modebtn" data-mode="both">Entrambi</button>
+  <div class="controls">
+    <div class="modebar" id="modeBar">
+      <span class="modelabel">Aggiorna:</span>
+      <button class="modebtn active" data-mode="firmware">Firmware</button>
+      <button class="modebtn" data-mode="display">Display</button>
+      <button class="modebtn" data-mode="both">Entrambi</button>
+    </div>
+    <div class="bar">
+      <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
+      <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
+      <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
+      <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
+      <button class="ghost" id="refreshBtn">↻ Ricarica</button>
+    </div>
+    <div id="selMsg" class="device-msg" style="color:var(--warn);"></div>
   </div>
-  <div class="bar">
-    <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
-    <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
-    <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
-    <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
-    <button class="ghost" id="refreshBtn">↻ Ricarica</button>
-  </div>
-  <div id="selMsg" class="device-msg" style="margin:-8px 0 8px; color:var(--warn);"></div>
 
   <section id="currentSection" hidden>
     <h2 class="sec">Aggiornamento in corso</h2>
