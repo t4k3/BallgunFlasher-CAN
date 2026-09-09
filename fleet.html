@@ -88,13 +88,34 @@
   .reg-row .rs { font-weight:700; font-variant-numeric:tabular-nums; }
   .reg-row .rg { font-size:11px; color:var(--accent); }
   .reg-row .rv { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .reg-row .rt { color:var(--muted); font-size:11px; min-width:128px; text-align:right; }
+  .panel { background:var(--card); border:1px solid var(--border); border-radius:12px;
+           padding:12px; margin:8px 0 14px; }
+  .panel.current { border-color:var(--accent); }
+  .panel-title { display:flex; align-items:center; justify-content:space-between; gap:10px;
+                 margin-bottom:8px; font-size:13px; font-weight:700; }
+  .known-row,.result-row { display:flex; align-items:center; gap:10px; padding:9px 4px;
+                           border-bottom:1px solid var(--border); font-size:13px; }
+  .known-row:last-child,.result-row:last-child { border-bottom:none; }
+  .known-main,.result-main { min-width:0; flex:1; }
+  .known-name,.result-name { display:block; font-weight:700; font-variant-numeric:tabular-nums; }
+  .known-meta,.result-meta { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
+  .result-badge { font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px; }
+  .result-badge.ok { color:var(--ok); background:#0d2a22; }
+  .result-badge.err { color:var(--err); background:#321417; }
+  .result-badge.warn { color:var(--warn); background:#30210d; }
+  @media (max-width:560px) {
+    .reg-row .rt { display:none; }
+    .known-row { align-items:flex-start; flex-wrap:wrap; }
+    .known-row button { width:100%; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header>
-    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.7.2</span>
+    <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.0</span>
         <span class="ver" id="verCheck"></span></h1>
     <p class="subtitle">Aggiornamento OTA di più sparapalloni in sequenza · ESP32-C6 · uso interno</p>
   </header>
@@ -113,7 +134,7 @@
 
   <div id="summary" class="summary"></div>
 
-  <h2 class="sec">Da aggiornare ora <span class="hint">— in raggio Bluetooth e autorizzate in questo browser</span>
+  <h2 class="sec">Coda di questa sessione (<span id="queueCount">0</span>) <span class="hint">— solo le macchine aggiunte per questo aggiornamento</span>
       <span id="sessionDone" style="color:var(--ok); font-weight:700;"></span></h2>
   <div class="modebar" id="modeBar">
     <span class="modelabel">Aggiorna:</span>
@@ -122,21 +143,37 @@
     <button class="modebtn" data-mode="both">Entrambi</button>
   </div>
   <div class="bar">
-    <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware</button>
+    <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
     <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
     <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
     <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
     <button class="ghost" id="refreshBtn">↻ Ricarica</button>
   </div>
   <div id="selMsg" class="device-msg" style="margin:-8px 0 8px; color:var(--warn);"></div>
+
+  <section id="currentSection" hidden>
+    <h2 class="sec">Aggiornamento in corso</h2>
+    <div class="panel current" id="currentList"></div>
+  </section>
+
   <div id="deviceList"></div>
-  <div id="hiddenDoneNote" class="device-msg" style="color:var(--ok);"></div>
+
+  <details id="knownSection">
+    <summary>Dispositivi autorizzati in passato (<span id="knownCount">0</span>)</summary>
+    <div class="device-msg">Il browser li ricorda, ma questo non significa che siano accesi o in raggio.</div>
+    <div class="panel" id="knownList"></div>
+  </details>
+
+  <section id="sessionHistorySection">
+    <h2 class="sec">Risultati di questa sessione <span class="hint">— restano visibili fino alla chiusura della pagina</span></h2>
+    <div class="panel" id="sessionHistoryList"><div class="empty">Nessun aggiornamento eseguito in questa sessione.</div></div>
+  </section>
 
   <details class="registry">
-    <summary>Registro fleet completo (<span id="regCount">0</span>)</summary>
+    <summary>Storico firmware fleet (<span id="regCount">0</span>)</summary>
     <div class="regtools">
       <input id="search" type="text" placeholder="🔍 cerca seriale o versione…">
-      <label><input type="checkbox" id="onlyOld"> solo da aggiornare</label>
+      <label><input type="checkbox" id="onlyOld"> solo firmware precedente</label>
     </div>
     <div id="registryList" class="registry-list"></div>
   </details>
@@ -205,8 +242,9 @@ let tftRoundSmall = null;    // 2.1" NX4848E021
 let fleetMode = 'firmware';  // 'firmware' | 'display' | 'both'
 let busy = false;
 const rows = new Map();      // device.id -> { device, el, dot, prog, msg, chk, state }
+const knownDevices = new Map(); // device.id -> device autorizzati in passato dal browser
 const dbRoster = new Map();  // serial -> { serial, current_firmware, last_seen_at, notes }
-let hiddenDone = [];         // device già su target al caricamento (fuori dall'elenco attivo)
+const sessionResults = [];   // risultati della sessione corrente (non persistono al refresh)
 
 // =====================================================================
 // UI helpers
@@ -707,9 +745,12 @@ async function reselectDevice(row) {
       filters: [{ namePrefix: 'wazlley' }],
       optionalServices: [OTA_SERVICE_UUID],
     });
-    rows.delete(row.device.id);
+    const oldId = row.device.id;
+    rows.delete(oldId);
+    knownDevices.delete(oldId);
     row.device = d;
     rows.set(d.id, row);
+    knownDevices.set(d.id, d);
     row.nameEl.textContent = d.name || d.id;
     log(`🔄 ${d.name}: riselezionata (handle fresco) — aggiorno`);
     updateSequence([row]);
@@ -722,13 +763,12 @@ async function reselectDevice(row) {
 // Render lista dispositivi (da getDevices)
 // =====================================================================
 function renderDevice(device, force) {
-  if (rows.has(device.id)) return rows.get(device.id);
-  // Già su target (secondo il DB): non ingombrare l'elenco attivo — mettila tra
-  // le "nascoste" (rivelabili/forzabili dal link). 'force' la mostra comunque.
-  const knownPre = dbRoster.get(device.name);
-  if (!force && knownPre && knownPre.current_firmware === firmwareVersion) {
-    if (!hiddenDone.some(d => d.id === device.id)) hiddenDone.push(device);
-    return null;
+  knownDevices.set(device.id, device);
+  if (rows.has(device.id)) {
+    const existing = rows.get(device.id);
+    existing.device = device;
+    if (force) existing.chk.checked = true;
+    return existing;
   }
   const el = document.createElement('div');
   el.className = 'device';
@@ -769,6 +809,7 @@ function renderDevice(device, force) {
   row.reselectBtn.addEventListener('click', () => reselectDevice(row));
   rows.set(device.id, row);
   $('deviceList').appendChild(el);
+  renderKnownDevices();
   return row;
 }
 
@@ -781,24 +822,66 @@ async function refreshDevices() {
   }
   const devices = await navigator.bluetooth.getDevices();
   const wazlley = devices.filter(d => (d.name||'').toLowerCase().includes('wazlley'));
-  for (const d of wazlley) renderDevice(d);
-  renderHiddenDoneNote();
+  knownDevices.clear();
+  for (const d of wazlley) knownDevices.set(d.id, d);
+  renderKnownDevices();
   updateEmptyState();
-  log(`Dispositivi autorizzati: ${wazlley.length} (${rows.size} da aggiornare, ${hiddenDone.length} già ok)`);
+  log(`Dispositivi autorizzati in passato: ${wazlley.length} · in coda ora: ${rows.size}`);
 }
 
 function updateEmptyState() {
-  const hasGranted = rows.size > 0;
-  const hasAny = hasGranted || dbRoster.size > 0;
-  $('updateAllBtn').disabled = !hasGranted || busy || !firmwareBytes;
+  const waitingCount = $('deviceList').querySelectorAll('.device').length;
+  const hasRows = rows.size > 0;
+  $('queueCount').textContent = waitingCount;
+  $('updateAllBtn').disabled = !hasRows || busy || !firmwareBytes;
   let empty = $('deviceList').querySelector('.empty');
-  if (!hasAny && !empty) {
+  if (waitingCount === 0 && !empty) {
     empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Nessuno sparapallone autorizzato. Premi "+ Aggiungi sparapallone" per ognuno (una volta sola).';
+    empty.textContent = $('currentSection').hidden
+      ? 'Coda vuota. Premi "+ Aggiungi sparapallone" oppure scegli un dispositivo autorizzato in passato.'
+      : 'Nessun altro dispositivo in attesa.';
     $('deviceList').appendChild(empty);
-  } else if (hasAny && empty) {
+  } else if (waitingCount > 0 && empty) {
     empty.remove();
+  }
+}
+
+// I dispositivi restituiti da getDevices() sono soltanto autorizzati in passato:
+// non sono necessariamente accesi o in raggio. Restano fuori dalla coda finché
+// l'operatore non li aggiunge esplicitamente.
+function renderKnownDevices() {
+  const list = $('knownList');
+  list.innerHTML = '';
+  const available = [...knownDevices.values()]
+    .filter(d => !rows.has(d.id))
+    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+  $('knownCount').textContent = available.length;
+
+  if (!available.length) {
+    list.innerHTML = '<div class="empty">Nessun altro dispositivo autorizzato.</div>';
+    return;
+  }
+  for (const device of available) {
+    const known = dbRoster.get(device.name);
+    const row = document.createElement('div'); row.className = 'known-row';
+    const main = document.createElement('span'); main.className = 'known-main';
+    const name = document.createElement('span'); name.className = 'known-name';
+    name.textContent = device.name || device.id;
+    const meta = document.createElement('span'); meta.className = 'known-meta';
+    meta.textContent = known && known.current_firmware
+      ? `Ultimo firmware registrato: ${known.current_firmware}`
+      : 'Firmware installato non registrato';
+    main.append(name, meta);
+    const add = document.createElement('button'); add.className = 'ghost small';
+    add.textContent = 'Aggiungi alla coda';
+    add.disabled = busy;
+    add.addEventListener('click', () => {
+      renderDevice(device, true);
+      updateEmptyState();
+      log(`Aggiunto alla coda: ${device.name || device.id}`);
+    });
+    row.append(main, add); list.appendChild(row);
   }
 }
 
@@ -820,15 +903,16 @@ function renderSummary() {
 
 // Registro fleet completo: tabella COMPATTA (una riga per macchina),
 // ricercabile e filtrabile. Sola lettura — per aggiornare serve autorizzare
-// la macchina in questo browser (sezione "Da aggiornare ora").
+// la macchina in questo browser (sezione "Coda di questa sessione").
 function renderRegistry() {
   const q = ($('search').value || '').toLowerCase().trim();
   const onlyOld = $('onlyOld').checked;
-  const granted = new Set([...rows.values()].map(r => r.device.name));
+  const queued = new Set([...rows.values()].map(r => r.device.name));
   const list = $('registryList'); list.innerHTML = '';
   $('regCount').textContent = dbRoster.size;
 
-  const items = [...dbRoster.values()].sort((a, b) => a.serial.localeCompare(b.serial));
+  const items = [...dbRoster.values()].sort((a, b) =>
+    String(b.last_seen_at || '').localeCompare(String(a.last_seen_at || '')));
   let shown = 0;
   for (const m of items) {
     const v = m.current_firmware || '?';
@@ -839,12 +923,14 @@ function renderRegistry() {
     const dot = document.createElement('span'); dot.className = 'rdot ' + (isOld ? 'old' : 'ok');
     const rs = document.createElement('span'); rs.className = 'rs'; rs.textContent = m.serial;
     row.append(dot, rs);
-    if (granted.has(m.serial)) {
-      const g = document.createElement('span'); g.className = 'rg'; g.textContent = '● autorizzata';
+    if (queued.has(m.serial)) {
+      const g = document.createElement('span'); g.className = 'rg'; g.textContent = '● in coda';
       row.append(g);
     }
     const rv = document.createElement('span'); rv.className = 'rv'; rv.textContent = v;
-    row.append(rv);
+    const rt = document.createElement('span'); rt.className = 'rt';
+    rt.textContent = m.last_seen_at || 'data sconosciuta';
+    row.append(rv, rt);
     list.appendChild(row); shown++;
   }
   if (!shown) {
@@ -854,44 +940,52 @@ function renderRegistry() {
   }
 }
 
-function renderFleetViews() { renderSummary(); renderRegistry(); }
+function renderFleetViews() { renderSummary(); renderRegistry(); renderKnownDevices(); }
 
-// Nota "N già aggiornate (nascoste)" + link per rivelarle/forzarle (utile se
-// il DB segna una versione che in realtà non è quella installata).
-function renderHiddenDoneNote() {
-  const el = $('hiddenDoneNote');
-  if (!hiddenDone.length) { el.textContent = ''; return; }
-  el.innerHTML = `✓ ${hiddenDone.length} già su ${firmwareVersion} in questo browser (nascoste) · ` +
-                 `<a href="#" id="showHidden" style="color:var(--accent); font-weight:700;">mostra / forza</a>`;
-  $('showHidden').addEventListener('click', (e) => {
-    e.preventDefault();
-    const toShow = hiddenDone.slice();
-    hiddenDone = [];
-    toShow.forEach(d => renderDevice(d, true));
-    renderHiddenDoneNote();
-    updateEmptyState();
-  });
-}
-
-// Contatore "aggiornate in questa sessione" + rimozione delle completate
-// dall'elenco attivo (così non si accumulano e resti focalizzato su ciò che
-// manca). La macchina resta comunque nel "Registro fleet completo" via DB.
+// Contatore e storico della sessione corrente. I risultati non scompaiono:
+// restano separati dalla coda fino alla chiusura o al refresh della pagina.
 let sessionDone = 0;
 function bumpSessionDone() {
   sessionDone++;
   $('sessionDone').textContent = ` · ✓ ${sessionDone} aggiornate in questa sessione`;
 }
-function scheduleRemove(row) {
-  setTimeout(() => {
-    row.el.style.transition = 'opacity .4s ease';
-    row.el.style.opacity = '0';
-    setTimeout(() => {
-      try { row.el.remove(); } catch (e) {}
-      rows.delete(row.device.id);
-      updateEmptyState();
-      renderRegistry();   // aggiorna il flag "autorizzata" nel registro
-    }, 420);
-  }, 4000);  // mostra il ✓ verde 4s, poi sfuma e sparisce
+function addSessionResult({ serial, success, motors, mode, duration_s, message }) {
+  sessionResults.unshift({
+    serial, success, motors, mode, duration_s, message,
+    at: new Date().toLocaleTimeString(),
+  });
+  const list = $('sessionHistoryList'); list.innerHTML = '';
+  for (const result of sessionResults) {
+    const row = document.createElement('div'); row.className = 'result-row';
+    const badge = document.createElement('span');
+    badge.className = 'result-badge ' + (result.success ? 'ok' : result.motors ? 'warn' : 'err');
+    badge.textContent = result.success ? 'COMPLETATA' : result.motors ? 'MOTORI ACCESI' : 'ERRORE';
+    const main = document.createElement('span'); main.className = 'result-main';
+    const name = document.createElement('span'); name.className = 'result-name'; name.textContent = result.serial;
+    const meta = document.createElement('span'); meta.className = 'result-meta';
+    meta.textContent = `${result.mode} · ${result.at} · ${result.duration_s}s${result.message ? ` · ${result.message}` : ''}`;
+    main.append(name, meta); row.append(badge, main); list.appendChild(row);
+  }
+}
+
+function moveToCurrent(row) {
+  $('currentSection').hidden = false;
+  $('currentList').appendChild(row.el);
+  updateEmptyState();
+}
+
+function leaveCurrent(row, success) {
+  if (success) {
+    try { row.el.remove(); } catch (e) {}
+    rows.delete(row.device.id);
+  } else {
+    row.chk.checked = false;
+    $('deviceList').appendChild(row.el);
+  }
+  $('currentSection').hidden = !$('currentList').querySelector('.device');
+  updateEmptyState();
+  renderRegistry();
+  renderKnownDevices();
 }
 
 // =====================================================================
@@ -970,9 +1064,12 @@ async function updateSequence(targetRows) {
   $('updateAllBtn').disabled = true;
   $('addBtn').disabled = true;
   rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
+  renderKnownDevices();
 
   let okCount = 0, failCount = 0;
   for (const row of targetRows) {
+    const sequenceStarted = nowMs();
+    moveToCurrent(row);
     let res = { success: true, motors: false, lastErr: '' };
     if (needFw) res = await runDeviceJob(row, 'firmware');
     if (res.success && !res.motors && needTft) {
@@ -988,22 +1085,40 @@ async function updateSequence(targetRows) {
     if (res.success) {
       okCount++;
       bumpSessionDone();
-      scheduleRemove(row);   // togli la completata dall'elenco attivo (resta nel registro DB)
+      addSessionResult({
+        serial: row.device.name || row.device.id,
+        success: true,
+        motors: false,
+        mode: fleetMode === 'firmware' ? `Firmware ${firmwareVersion}` :
+              fleetMode === 'display' ? 'Display' : `Firmware ${firmwareVersion} + display`,
+        duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
+        message: '',
+      });
+      leaveCurrent(row, true);
     } else {
       if (!res.motors) setState(row, 'failed', res.lastErr || 'fallito');
       log(`❌ ${row.device.name}: ${res.lastErr || 'fallito'} (dopo ${DEVICE_ATTEMPTS} tentativi)`);
+      addSessionResult({
+        serial: row.device.name || row.device.id,
+        success: false,
+        motors: res.motors,
+        mode: fleetMode === 'firmware' ? 'Firmware' : fleetMode === 'display' ? 'Display' : 'Firmware + display',
+        duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
+        message: res.lastErr || 'fallito',
+      });
+      leaveCurrent(row, false);
       failCount++;
     }
     await new Promise(r => setTimeout(r, INTER_DEVICE_MS)); // pausa tra una macchina e l'altra
   }
 
   busy = false;
-  $('updateAllBtn').disabled = false;
   $('addBtn').disabled = false;
   rows.forEach(r => {
     if (r.state==='failed'||r.state==='motors') { r.retryBtn.disabled = false; r.reselectBtn.disabled = false; }
   });
-  renderFleetViews();   // aggiorna riepilogo + registro con le nuove versioni
+  renderFleetViews();   // aggiorna riepilogo, dispositivi conosciuti e storico firmware
+  updateEmptyState();
   log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
 }
 
@@ -1026,8 +1141,8 @@ document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', (
   fleetMode = b.dataset.mode;
   document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
   $('updateAllBtn').textContent =
-    fleetMode === 'firmware' ? 'Aggiorna firmware' :
-    fleetMode === 'display'  ? 'Aggiorna display'  : 'Aggiorna firmware + display';
+    fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
+    fleetMode === 'display'  ? 'Aggiorna display selezionati'  : 'Aggiorna firmware + display selezionati';
 }));
 
 $('updateAllBtn').addEventListener('click', () => {
@@ -1056,7 +1171,6 @@ $('updateAllBtn').addEventListener('click', () => {
   await loadRoster();        // roster DB prima del render (per mostrare le versioni installate)
   await refreshDevices();
   renderFleetViews();
-  renderHiddenDoneNote();
   updateEmptyState();
 })();
 
