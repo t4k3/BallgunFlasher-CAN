@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.19</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.20</title>
 <style>
     :root {
         color-scheme: dark;
@@ -325,7 +325,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.19 · IDF 6.1 / firmware V12.1.1</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.20 · IDF 6.1 / firmware V12.1.1</code></span>
         <span>STANDALONE bin <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1830,6 +1830,65 @@ async function nbleConnect() {
     }
 }
 
+// NEXTION TRANSFER: every block, including the last, requires its own ACK.
+async function nbleReadUploadAck(chunkNumber) {
+  const deadline = Date.now() + NBLE_ACK_TIMEOUT;
+  while (Date.now() < deadline) {
+    while (nble.rxBuf.length > 0) {
+      const byte = nble.rxBuf[0];
+      if (byte === 0x05) {
+        nble.rxBuf = nble.rxBuf.slice(1);
+        return { byte, offset: 0 };
+      }
+      if (byte === 0x08) {
+        if (nble.rxBuf.length < 5) break; // preserve partial offset until next notify
+        const b = nble.rxBuf;
+        const offset = (b[1] | (b[2] << 8) | (b[3] << 16) | (b[4] << 24)) >>> 0;
+        nble.rxBuf = b.slice(5);
+        return { byte, offset };
+      }
+      nble.rxBuf = nble.rxBuf.slice(1);
+    }
+    if (nble.device && !nble.device.gatt.connected) break;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    try { await nbleWaitForData(Math.min(500, remaining)); } catch { /* bounded wait */ }
+  }
+  const error = new Error('The display has not confirmed the update. Check its screen before trying again.');
+  error.updateOutcome = 'unconfirmed';
+  error.chunkNumber = chunkNumber;
+  throw error;
+}
+
+async function nbleTransferDisplay(data, report) {
+  if (!data.length) throw new Error('Empty display file');
+  let position = 0, chunks = 0, seeks = 0;
+  const started = Date.now();
+  while (position < data.length) {
+    const end = Math.min(position + NBLE_CHUNK_SIZE, data.length);
+    await nbleForwardRaw(data.slice(position, end));
+    position = end;
+    chunks++;
+    const ack = await nbleReadUploadAck(chunks);
+    if (ack.byte === 0x08) {
+      if (ack.offset > data.length) throw new Error('Invalid display offset');
+      // Zero means continue, not rewind. A nonzero offset may request a seek
+      // even after the final write; complete only after that request is served.
+      if (ack.offset > 0 && ack.offset !== position) {
+        if (++seeks > 32) throw new Error('Too many display retry requests');
+        position = ack.offset;
+      }
+    }
+    report(position, chunks, ack);
+  }
+  return {
+    chunks,
+    totalSecs: Number(((Date.now() - started) / 1000).toFixed(1)),
+    confirmation: 'display_block_ack',
+  };
+}
+// END NEXTION TRANSFER
+
 async function nbleRunUpdate(tftData) {
     const cbtn = document.getElementById('nbleConnectBtn');
     cbtn.disabled = true;
@@ -1936,98 +1995,40 @@ async function nbleRunUpdate(tftData) {
         nble.rxBuf = new Uint8Array(0);
         nbleSetProgress(5);
 
-        // 6) Stream the .tft in 4 KB chunks, drive by 0x05 / 0x08 frames.
-        const data = tftData.data;
-        const fileSize = tftData.size;
-        let filePos = 0;
-        let chunksSent = 0;
-        let frame05Count = 0;
-        let frame08Count = 0;
-        const tStart = Date.now();
-
-        // First chunk goes out immediately after the initial 0x05.
-        {
-            const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
-            await nbleForwardRaw(data.slice(filePos, end));
-            filePos = end; chunksSent++;
-        }
-
-        while (filePos < fileSize) {
-            // Wait for either 0x05 or 0x08 from the display.
-            const tFrame = Date.now();
-            let frameByte = -1;
-            let off = 0;
-            while (Date.now() - tFrame < NBLE_ACK_TIMEOUT) {
-                if (nble.rxBuf.length >= 1) {
-                    if (nble.rxBuf[0] === 0x05) {
-                        frameByte = 0x05;
-                        nble.rxBuf = nble.rxBuf.slice(1);
-                        frame05Count++;
-                        break;
-                    } else if (nble.rxBuf[0] === 0x08 && nble.rxBuf.length >= 5) {
-                        off = (nble.rxBuf[1] | (nble.rxBuf[2] << 8) | (nble.rxBuf[3] << 16) | (nble.rxBuf[4] << 24)) >>> 0;
-                        frameByte = 0x08;
-                        nble.rxBuf = nble.rxBuf.slice(5);
-                        frame08Count++;
-                        log(`  0x08 frame @ chunk ${chunksSent}: off=${off}, filePos=${filePos}`, 'NEXTION-BLE');
-                        break;
-                    } else if (nble.rxBuf[0] !== 0x05 && nble.rxBuf[0] !== 0x08) {
-                        const hex = Array.from(nble.rxBuf.slice(0,8)).map(x=>x.toString(16).padStart(2,'0')).join(' ');
-                        log(`  ⚠ unexpected frame: [${hex}] — discarding 1 byte`, 'NEXTION-BLE');
-                        nble.rxBuf = nble.rxBuf.slice(1);
-                    }
-                }
-                try { await nbleWaitForData(500); } catch { /* keep polling until timeout above */ }
+        // 6) Every block, including the last, must be acknowledged.
+        const transfer = await nbleTransferDisplay(tftData.data, (position, chunks, ack) => {
+            if (ack.byte === 0x08) log(`  0x08 frame @ chunk ${chunks}: off=${ack.offset}`, 'NEXTION-BLE');
+            nbleSetProgress(5 + (position / tftData.size) * 90);
+            if (chunks % 10 === 0 || position >= tftData.size) {
+                log(`  ${position}/${tftData.size} B — ${chunks} acknowledged chunks`, 'NEXTION-BLE');
             }
-            if (frameByte < 0) throw new Error(`no display ACK after chunk ${chunksSent} (filePos=${filePos})`);
-
-            if (frameByte === 0x08) {
-                // v1.2: off>0 → seek to offset; off==0 → continue forward
-                // (do NOT rewind, see USB path comment).
-                if (off >= fileSize) { filePos = fileSize; break; }
-                if (off > 0) filePos = off;
-            }
-            const end = Math.min(filePos + NBLE_CHUNK_SIZE, data.length);
-            await nbleForwardRaw(data.slice(filePos, end));
-            filePos = end; chunksSent++;
-
-            const pct = 5 + (filePos / fileSize) * 90;
-            nbleSetProgress(pct);
-            if (chunksSent % 10 === 0 || filePos >= fileSize) {
-                const elapsed = ((Date.now() - tStart) / 1000).toFixed(1);
-                log(`  ${Math.round(filePos/1024)}/${Math.round(fileSize/1024)} KB (${(filePos*100/fileSize).toFixed(0)}%) — ${chunksSent} chunks, ${elapsed}s`, 'NEXTION-BLE');
-            }
-        }
-        const totalSecs = ((Date.now() - tStart) / 1000).toFixed(1);
-        log(`upload complete: ${chunksSent} chunks (0x05=${frame05Count}, 0x08=${frame08Count}) in ${totalSecs}s`, 'NEXTION-BLE');
+        });
+        log(`transfer confirmed: ${transfer.chunks} chunks in ${transfer.totalSecs}s; final block ACK received`, 'NEXTION-BLE');
         nbleSetProgress(96);
 
-        // 7) Post-upload sniff window — capture success ACK / boot event from the display.
+        // 7) Boot bytes are optional; do not require a seven-byte pattern.
         await new Promise(r => setTimeout(r, 2500));
         if (nble.rxBuf.length > 0) {
-            const hex = Array.from(nble.rxBuf.slice(0, 32)).map(x=>x.toString(16).padStart(2,'0')).join(' ');
-            log(`post-upload bytes (${nble.rxBuf.length}): ${hex}${nble.rxBuf.length>32?' …':''}`, 'NEXTION-BLE');
-            // Look for the canonical success pattern "05 00 00 00 ff ff ff".
-            const buf = nble.rxBuf;
-            let ok = false;
-            for (let i = 0; i + 7 <= buf.length; i++) {
-                if (buf[i]===0x05 && buf[i+1]===0x00 && buf[i+2]===0x00 && buf[i+3]===0x00 &&
-                    buf[i+4]===0xFF && buf[i+5]===0xFF && buf[i+6]===0xFF) { ok = true; break; }
-            }
-            if (ok) log('✅ display ACKed success (05 00 00 00 FF FF FF)', 'NEXTION-BLE');
-            else log('⚠ no success-ACK pattern seen — display may show data error at reboot', 'NEXTION-BLE');
+            const hex = Array.from(nble.rxBuf.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            log(`post-transfer bytes: ${hex}`, 'NEXTION-BLE');
         }
 
         // 8) Exit passthrough (FE 00). May not get an ACK if the display already
         // rebooted into the new TFT and the firmware tore down the bridge; treat
         // a timeout here as non-fatal.
-        try { await nbleSendCmd([0xFE, 0x00], 1500); } catch { /* ignored */ }
+        if (nble.device && nble.device.gatt.connected) {
+            try { await nbleSendCmd([0xFE, 0x00], 1500); } catch { /* ignored */ }
+        }
         nbleSetProgress(100);
-        log('NEXTION BLE UPDATE COMPLETE — display will restart on the new .tft', 'NEXTION-BLE');
+        log('NEXTION BLE TRANSFER CONFIRMED — wait for the display to restart', 'NEXTION-BLE');
+        nbleSetStatus(!!(nble.device && nble.device.gatt.connected), 'Update received — wait for the display to restart.');
     } catch (e) {
-        log(`UPDATE FAILED: ${e.message || e}`, 'NEXTION-BLE');
+        log(`${e.updateOutcome === 'unconfirmed' ? 'UPDATE UNCONFIRMED' : 'UPDATE FAILED'}: ${e.message || e}${e.chunkNumber ? ` (block ${e.chunkNumber})` : ''}`, 'NEXTION-BLE');
+        nbleSetStatus(!!(nble.device && nble.device.gatt.connected), e.message || String(e));
         // Best-effort exit so the device returns to normal display ops.
-        try { await nbleSendCmd([0xFE, 0x00], 1500); } catch {}
+        if (nble.device && nble.device.gatt.connected) {
+            try { await nbleSendCmd([0xFE, 0x00], 1500); } catch {}
+        }
     } finally {
         cbtn.disabled = false;
     }
