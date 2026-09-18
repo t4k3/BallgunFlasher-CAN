@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.20</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.21</title>
 <style>
     :root {
         color-scheme: dark;
@@ -100,6 +100,13 @@
     .model-picker .spec { display:block; margin-top:2px; color:var(--muted-2); font-size:9px; }
     .file-pick { display:inline-block; margin:1px 0 2px; color:var(--muted); cursor:pointer; font-size:11px; text-decoration:none; }
     .file-pick:hover { color:var(--cyan-strong); }
+    .ota-profile-label { margin:0 0 4px; color:var(--muted); font-size:11px; }
+    .ota-profile-select { width:100%; min-width:0; min-height:38px; margin:0 0 5px; padding:8px 10px;
+                          border:1px solid var(--border); border-radius:9px; background:var(--surface-2);
+                          color:var(--text); font:inherit; font-size:12px; font-weight:650; }
+    .ota-profile-select:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .ota-profile-select:disabled,.file-pick[aria-disabled="true"] { opacity:.5; pointer-events:none; }
+    .ota-profile-info { min-height:16px; margin:0 0 9px; color:var(--cyan-strong); font-size:11px; overflow-wrap:anywhere; }
     .chip-info { margin-top:3px; color:var(--muted-2); font-size:11px; line-height:1.35; }
     .chip-info code { color:var(--muted); }
     .mac-readout { margin-top:3px; color:#cbd2e1; font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
@@ -139,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.21</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -257,6 +264,13 @@
                 <div class="status-dot" id="otaStatusDot"></div>
                 <span id="otaStatusText">Disconnected</span>
             </div>
+            <label for="otaBatteryProfile" class="ota-profile-label">Profilo batteria</label>
+            <select id="otaBatteryProfile" class="ota-profile-select" autocomplete="off">
+                <option value="sodium" selected>Sodio · 11S (predefinito)</option>
+                <option value="lithium">Litio 36 V · 10S</option>
+                <option value="custom" disabled hidden>File personalizzato</option>
+            </select>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.2 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -325,8 +339,8 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.20 · IDF 6.1 / firmware V12.1.1</code></span>
-        <span>STANDALONE bin <code id="footerVersion">…</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.21 · OTA interno V12.1.2 / V12.1.2-LI10S</code></span>
+        <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
         <span style="margin-left:auto;">
@@ -389,10 +403,8 @@ if (!('serial' in navigator)) {
         const m = text.match(/V\d+\.\d+\.\d+/);
         const ver = m ? m[0] : '(unknown)';
         document.getElementById('standaloneVersion').textContent = ver;
-        document.getElementById('otaVersion').textContent = ver;
     } catch (e) {
         document.getElementById('standaloneVersion').textContent = '(offline)';
-        document.getElementById('otaVersion').textContent = '(offline)';
     }
 })();
 
@@ -1538,33 +1550,135 @@ async function otaRunUpdate(binData) {
     }
 }
 
-let otaCustomBin = null;
-document.getElementById('otaFile').addEventListener('change', (e) => {
-    const f = e.target.files[0];
-    if (f) { otaCustomBin = f; document.getElementById('otaFileLabel').textContent = `custom: ${f.name}`; }
-});
-
-// Single button: connect AND immediately run the OTA — no human-paced gap
-// between connecting and starting the upload.
-document.getElementById('otaConnectBtn').addEventListener('click', async () => {
-    try {
-        const connected = await otaConnect();
-        if (!connected) return;
-        let binData;
-        if (otaCustomBin) {
-            log(`using custom firmware: ${otaCustomBin.name}`, 'OTA');
-            binData = await otaCustomBin.arrayBuffer();
-        } else {
-            log('downloading STANDALONE firmware…', 'OTA');
-            const res = await fetch(`${FIRMWARE_BASE}/STANDALONE/BallgunSTANDALONE.bin?cb=${Date.now()}`);
-            if (!res.ok) { log(`HTTP ${res.status} fetching firmware`, 'OTA'); return; }
-            binData = await res.arrayBuffer();
-        }
-        await otaRunUpdate(binData);
-    } catch (e) {
-        log(`OTA error: ${e.message || e}`, 'OTA');
+// OTA BATTERY PROFILES: internal-only catalog and selection/validation boundary.
+const OTA_BATTERY_PROFILES = Object.freeze({
+    "sodium": {
+        "label": "Sodio · 11S",
+        "version": "V12.1.2",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.2.bin",
+        "size": 883200,
+        "sha256": "52cdceca6ac709cf80685bb9d029e8dedd84011ab6dc0f0a688b35031ade5d35"
+    },
+    "lithium": {
+        "label": "Litio 36 V · 10S",
+        "version": "V12.1.2-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.2-LI10S.bin",
+        "size": 883200,
+        "sha256": "28ba0b3b33bd0fb8c1b769cbdd734c30cd130cd6aaf54a9773f955ae819785f2"
     }
 });
+Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
+let otaCustomBin = null;
+let otaProfileBusy = false;
+const otaProfileSelect = document.getElementById('otaBatteryProfile');
+const otaFileInput = document.getElementById('otaFile');
+const otaFileLabel = document.getElementById('otaFileLabel');
+
+function otaRenderProfile() {
+    const profile = OTA_BATTERY_PROFILES[otaProfileSelect.value];
+    document.getElementById('otaVersion').textContent = otaCustomBin ? 'Personalizzato' : (profile?.version || '—');
+    document.getElementById('otaProfileInfo').textContent = otaCustomBin
+        ? `File personalizzato: ${otaCustomBin.name}`
+        : profile ? `${profile.label} · ${profile.version} · ${otaProfileSelect.value === 'sodium' ? 44 : 42} V max` : 'Seleziona il profilo';
+    otaFileLabel.textContent = otaCustomBin ? `custom: ${otaCustomBin.name}` : '…or pick custom .bin';
+}
+function otaResetProfile() {
+    if (otaProfileBusy) return;
+    otaCustomBin = null;
+    otaFileInput.value = '';
+    otaProfileSelect.value = 'sodium';
+    otaRenderProfile();
+}
+function otaLockProfile(busy) {
+    document.getElementById('otaConnectBtn').disabled = busy;
+    otaProfileSelect.disabled = busy;
+    otaFileInput.disabled = busy;
+    otaFileLabel.setAttribute('aria-disabled', String(busy));
+}
+otaProfileSelect.addEventListener('change', () => {
+    if (otaProfileBusy) return;
+    // A named profile always discards the previous custom file.
+    otaCustomBin = null;
+    otaFileInput.value = '';
+    otaRenderProfile();
+});
+otaFileInput.addEventListener('change', (e) => {
+    if (otaProfileBusy) return;
+    const file = e.target.files[0];
+    if (!file) { otaResetProfile(); return; }
+    otaCustomBin = file;
+    otaProfileSelect.value = 'custom';
+    otaRenderProfile();
+});
+// Do not persist lithium or let browser form restoration make it the default.
+otaResetProfile();
+window.addEventListener('pageshow', (event) => { if (event.persisted) otaResetProfile(); });
+
+function otaImageVersion(binData) {
+    const bytes = new Uint8Array(binData);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.length < 256 || bytes.length > 0x140000 || bytes[0] !== 0xE9 ||
+        view.getUint16(12, true) !== 13 || view.getUint32(32, true) !== 0xABCD5432)
+        throw new Error('File non valido per ESP32-C6');
+    const field = (start, end) => new TextDecoder().decode(bytes.subarray(start, end)).split('\0')[0];
+    const version = field(48, 80);
+    if (field(80, 112) !== 'BallgunSTANDALONE' || !/^V\d+\.\d+\.\d+(?:-[A-Z0-9]+)?$/.test(version))
+        throw new Error('File o versione non compatibile con BallgunSTANDALONE');
+    return version;
+}
+async function otaLoadSelection(selection) {
+    let data;
+    if (selection.file) {
+        data = await selection.file.arrayBuffer();
+    } else {
+        const response = await fetch(`${FIRMWARE_BASE}/${selection.profile.path}?cb=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}: file ${selection.profile.label} non disponibile`);
+        data = await response.arrayBuffer();
+    }
+    const version = otaImageVersion(data);
+    if (selection.profile) {
+        const profile = selection.profile;
+        if (data.byteLength !== profile.size || version !== profile.version)
+            throw new Error('Il file ricevuto non corrisponde al profilo selezionato');
+        const digest = await crypto.subtle.digest('SHA-256', data);
+        const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+        if (hash !== profile.sha256) throw new Error('Verifica SHA-256 fallita: aggiornamento non avviato');
+    }
+    return { data, version };
+}
+
+// Snapshot and lock the selection BEFORE opening the Bluetooth chooser. File
+// validation must finish before otaRunUpdate can send FE05 or any image data.
+document.getElementById('otaConnectBtn').addEventListener('click', async () => {
+    if (otaProfileBusy) return;
+    const selection = otaCustomBin ? { file: otaCustomBin }
+        : { profile: OTA_BATTERY_PROFILES[otaProfileSelect.value] };
+    if (!selection.file && !selection.profile) { log('Seleziona un profilo batteria valido', 'OTA'); return; }
+    otaProfileBusy = true;
+    otaLockProfile(true);
+    let transferStarted = false;
+    try {
+        // requestDevice stays in the user gesture, before network awaits.
+        const connected = await otaConnect();
+        if (!connected) return;
+        const label = selection.file ? `File personalizzato: ${selection.file.name}` : selection.profile.label;
+        log(`Preparazione ${label}`, 'OTA');
+        const image = await otaLoadSelection(selection);
+        document.getElementById('otaVersion').textContent = image.version;
+        log(`${label} · ${image.version} · ${image.data.byteLength} bytes · verificato`, 'OTA');
+        transferStarted = true;
+        await otaRunUpdate(image.data);
+    } catch (e) {
+        log(`OTA non avviato: ${e.message || e}`, 'OTA');
+    } finally {
+        // A failed download/validation never enters OTA. Do not disconnect a
+        // completed transfer here: the ESP32 still needs to verify and reboot.
+        if (!transferStarted && ota.device?.gatt?.connected) ota.device.gatt.disconnect();
+        otaProfileBusy = false;
+        otaLockProfile(false);
+    }
+});
+// END OTA BATTERY PROFILES
 
 if (!navigator.bluetooth) {
     document.getElementById('otaInfo').textContent =

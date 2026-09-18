@@ -1,5 +1,24 @@
 {
-  "flasher": "1.5.20",
+  "flasher": "1.5.21",
   "fleet": "0.8.2",
-  "firmware": "V12.1.1"
+  "firmware": "V12.1.1",
+  "internal_ota": {
+    "default": "sodium",
+    "profiles": {
+      "sodium": {
+        "label": "Sodio · 11S",
+        "version": "V12.1.2",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.2.bin",
+        "size": 883200,
+        "sha256": "52cdceca6ac709cf80685bb9d029e8dedd84011ab6dc0f0a688b35031ade5d35"
+      },
+      "lithium": {
+        "label": "Litio 36 V · 10S",
+        "version": "V12.1.2-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.2-LI10S.bin",
+        "size": 883200,
+        "sha256": "28ba0b3b33bd0fb8c1b769cbdd734c30cd130cd6aaf54a9773f955ae819785f2"
+      }
+    }
+  }
 }
