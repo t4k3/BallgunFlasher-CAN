@@ -48,23 +48,23 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
     return { elements, state, select, custom, click: () => elements.otaConnectBtn.listeners.click(),
         load: key => context.otaLoadSelection({ profile: catalog[key] }) };
 }
-test('page and metadata versions agree; standard shared firmware is unchanged', () => {
+test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
-    assert.equal(metadata.flasher, '1.5.21');
-    assert.equal(metadata.firmware, 'V12.1.1');
+    assert.equal(metadata.flasher, '1.5.22');
+    assert.equal(metadata.firmware, 'V12.1.3');
     assert.equal(metadata.internal_ota.default, 'sodium');
-    assert.equal(catalog.sodium.version, 'V12.1.2');
-    assert.equal(catalog.lithium.version, 'V12.1.2-LI10S');
+    assert.equal(catalog.sodium.version, 'V12.1.3');
+    assert.equal(catalog.lithium.version, 'V12.1.3-LI10S');
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
-    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.1.1');
+    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.1.3');
 });
 test('always starts with sodium even when the browser restores lithium', () => {
     const h = harness();
     assert.equal(h.elements.otaBatteryProfile.value, 'sodium');
-    assert.equal(h.elements.otaVersion.textContent, 'V12.1.2');
+    assert.equal(h.elements.otaVersion.textContent, 'V12.1.3');
     assert.match(h.elements.otaProfileInfo.textContent, /Sodio/);
     h.select('lithium');
-    assert.equal(h.elements.otaVersion.textContent, 'V12.1.2-LI10S');
+    assert.equal(h.elements.otaVersion.textContent, 'V12.1.3-LI10S');
     h.state.events.pageshow({ persisted: true });
     assert.equal(h.elements.otaBatteryProfile.value, 'sodium');
 });
@@ -95,7 +95,7 @@ test('custom selection is explicit and never silently downloads a named profile'
     assert.equal(h.state.requests.length, 0);
     assert.equal(h.state.transfers.length, 1);
     assert.match(h.elements.otaProfileInfo.textContent, /File personalizzato/);
-    assert.equal(h.elements.otaVersion.textContent, 'V12.1.2-LI10S');
+    assert.equal(h.elements.otaVersion.textContent, 'V12.1.3-LI10S');
 });
 test('wrong profile bytes never enter OTA and have no fallback to standard', async () => {
     const h = harness({ fetchResult: () => ({ ok: true, arrayBuffer: async () => image('lithium') }) });

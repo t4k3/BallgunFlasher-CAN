@@ -1,11 +1,11 @@
-# Portale interno 1.5.21 — profili batteria OTA
+# Portale interno 1.5.22 — profili batteria OTA
 
 Nella sola scheda **BLE · WIRELESS / OTA** sono disponibili:
 
 | Selezione | Versione immagine | File |
 |---|---|---|
-| Sodio · 11S (predefinito) | V12.1.2 | `INTERNAL/OTA/naion-11s/V12.1.2.bin` |
-| Litio 36 V · 10S | V12.1.2-LI10S | `INTERNAL/OTA/liion-10s/V12.1.2-LI10S.bin` |
+| Sodio · 11S (predefinito) | V12.1.3 | `INTERNAL/OTA/naion-11s/V12.1.3.bin` |
+| Litio 36 V · 10S | V12.1.3-LI10S | `INTERNAL/OTA/liion-10s/V12.1.3-LI10S.bin` |
 
 La pagina parte sempre da Sodio, anche dopo ripristino della pagina dalla cache
 di navigazione. Il tipo batteria, la versione completa e la tensione massima sono
@@ -22,22 +22,21 @@ chip/progetto/versione, ma non hanno un hash di catalogo.
 
 ## Separazione dal portale cliente
 
-`STANDALONE/BallgunSTANDALONE.bin` resta V12.1.1 (sodio), byte per byte invariato,
-SHA-256 `86e1e96c03253e0feda1ecf2d2b8d4975a6be58568e63f3ac9113710f655a875`.
-Il portale cliente e le app native continuano a usare quel percorso. Nessuna
-modifica al repository `upgrade.takeoff.pro`, al suo backend, ai file TFT o ai
-binari di boot. La scheda USB e Fleet rimangono sul binario standard condiviso.
-`version.json.firmware` descrive ancora il binario condiviso; `internal_ota`
-descrive esclusivamente le nuove varianti interne.
+`STANDALONE/BallgunSTANDALONE.bin` è V12.1.3 (sodio), SHA-256
+`1d4a7a914c33cd404aec169521a8af6c8761b375e38d58715e380ee57c660a71`.
+Il portale cliente, la scheda USB, Fleet e le app native continuano a usare quel
+percorso condiviso. `version.json.firmware` descrive il binario standard;
+`internal_ota` descrive le due varianti selezionabili nel portale interno.
+I file TFT non sono stati modificati.
 
 "Interno" indica l'interfaccia che espone la scelta; non viene aggiunto un nuovo
 meccanismo di autenticazione al repository GitHub Pages esistente.
 
 ## Provenienza dei binari
 
-Build ESP32-C6 / ESP-IDF 6.1 del 18 settembre 2026, dal checkout canonico
-`ballgun_STANDALONE_CANBUS`, base `31e23a8691745ada14283385fc8fd201b3e49af6`
-con le modifiche locali del passaggio di controllo BLE e dei profili batteria.
+Build pulite ESP32-C6 / ESP-IDF 6.1 del 13 ottobre 2026, dal checkout canonico
+`ballgun_STANDALONE_CANBUS`. La versione base proviene dal file ESP-IDF
+`version.txt`; il profilo litio aggiunge il suffisso `-LI10S`.
 Entrambi i file sono da 883200 byte. Descrittori, checksum ESP e validation hash
 verificati con esptool. I valori completi SHA-256 sono nel catalogo `version.json`.
 
@@ -55,6 +54,6 @@ firmware; un successivo aggiornamento standard riporterebbe il profilo sodio.
 - Sintassi del modulo JavaScript verificata con `node --check`.
 - Browser: versione e tensione corrette passando Sodio → Litio; ricaricando si
   torna a Sodio. Scheda controllata anche visivamente, senza avviare collegamenti.
-- Hash confrontati prima/dopo su file condivisi e sito cliente: invariati.
+- Descrittori ESP, versioni e hash confrontati con i metadati pubblicati.
 
 Queste verifiche non costituiscono una prova BLE o un flash fisico della macchina.
