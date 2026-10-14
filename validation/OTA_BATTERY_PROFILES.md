@@ -1,4 +1,14 @@
-# Portale interno 1.5.24 — profili batteria OTA
+# Portale interno 1.5.25 / Fleet 1.0.2 — V12.1.6
+
+Aggiornamento 14 ottobre 2026: catalogo e binario condiviso puntano a V12.1.6
+(sodio, 884176 byte) e V12.1.6-LI10S (litio, 884192 byte).
+Hash completi in `version.json`; binari V12.1.5 conservati nei percorsi versionati
+per rollback. Il firmware attende ACK per accelerazione dolce, velocità e
+controlword dopo wake-and-shake, con massimo tre tentativi e RPM freschi.
+Test host e build dei due profili superati; collaudo fisico ancora da eseguire.
+Nessun parametro FTD30 o file TFT modificato in questa release.
+
+## Documentazione storica V12.1.5 (sotto)
 
 Nella sola scheda **BLE · WIRELESS / OTA** sono disponibili:
 

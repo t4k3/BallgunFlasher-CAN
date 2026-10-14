@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.24</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.25</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.24</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.25</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +270,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.5 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.6 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -340,7 +340,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.24 · OTA interno V12.1.5 / V12.1.5-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.25 · OTA interno V12.1.6 / V12.1.6-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1555,17 +1555,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.5",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.5.bin",
-        "size": 883648,
-        "sha256": "10a4e9a7a1f4656bb4e907581fe0796b8c1f656dce7c8ff1d0ea8f953430906b"
+        "version": "V12.1.6",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.6.bin",
+        "size": 884176,
+        "sha256": "cdd6d76921fb9f0b6e340a8746c2c8a7671a50d7c230bc45ef72be40af551b44"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.5-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.5-LI10S.bin",
-        "size": 883648,
-        "sha256": "2ec255b7ab9d2f2ce733a4b8b20391da4157c5dc1ef66df2c341444c454d7935"
+        "version": "V12.1.6-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.6-LI10S.bin",
+        "size": 884192,
+        "sha256": "165000ea8d2c7f0a246f7a09351374f539b8366451bdc916472151fe156cd0a3"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
