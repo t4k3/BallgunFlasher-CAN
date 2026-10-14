@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.22</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.23</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.22</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.23</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +270,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.3 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.4 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -326,9 +326,10 @@
             </div>
             <label class="file-pick" for="fparSetFile" id="fparSetLabel">📄 carica set .prm</label>
             <input type="file" id="fparSetFile" accept=".prm" style="display:none;" />
-            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Ripristina parametri (node1 + node2)</button>
+            <button class="btn-connect" id="fparDiagnosticBtn">Leggi diagnostica FTD30 (nessuna scrittura)</button>
+            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Correggi nodo 1 (nodo 2 intatto)</button>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Motori fermi · stesso set su node1 (id=1) e node2 (id=2) · P21=0 · + SAVE</div>
+            <div class="chip-info" id="fparInfo">Set waz_nodo2.prm · solo P1 cambia a 1 · verifica completa prima di SAVE · richiede firmware con sblocco verificato (V12.1.4)</div>
         </div>
     </div>
 
@@ -339,7 +340,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.22 · OTA interno V12.1.3 / V12.1.3-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.23 · OTA interno V12.1.4 / V12.1.4-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1554,17 +1555,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.3",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.3.bin",
-        "size": 883200,
-        "sha256": "1d4a7a914c33cd404aec169521a8af6c8761b375e38d58715e380ee57c660a71"
+        "version": "V12.1.4",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.4.bin",
+        "size": 883568,
+        "sha256": "d67237a492fbff1bab477b5463b14f43a9579bc2264e1a5b8cedc903caebf73d"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.3-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.3-LI10S.bin",
-        "size": 883200,
-        "sha256": "56d778151c486c485fbcc2a9bbafb00c245deb7aad7b126fd2907fa8d8a5e187"
+        "version": "V12.1.4-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.4-LI10S.bin",
+        "size": 883568,
+        "sha256": "b17964df26992b7c783ad3d6bc3cb0821120829c4bf3d3603ec687272a1d3eb4"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
@@ -2195,7 +2196,12 @@ function fparParsePrm(text){
         const m = line.match(/^(\d+)\s*,\s*(-?\d+)\s*,/);
         if (m) out.push({ index: parseInt(m[1], 10), value: parseInt(m[2], 10) });
     }
-    return out;
+    if (out.length !== 1024 || new Set(out.map(p => p.index)).size !== 1024 ||
+        out.some(p => p.index < 0 || p.index > 1023 || !Number.isSafeInteger(p.value) || p.value < -2147483648 || p.value > 4294967295))
+        throw new Error('Set non valido: servono 1024 indici unici (0–1023) e valori a 32 bit');
+    if (out.find(p => p.index === 21).value !== 0)
+        throw new Error('P21 deve essere 0 nel set di riferimento');
+    return out.sort((a,b) => a.index - b.index);
 }
 
 function fparOnNotify(ev){
@@ -2239,16 +2245,41 @@ async function fparRestoreNode(node, params, label){
                      p.value & 0xFF, (p.value >> 8) & 0xFF, (p.value >> 16) & 0xFF, (p.value >> 24) & 0xFF);
         }
         const r = await fparCmd(pkt, 15000);
-        if (r.length >= 6 && r[1] === 0x02) { ok += r[2] | (r[3] << 8); skip += r[4] | (r[5] << 8); }
+        if (r.length !== 6 || r[0] !== 0xFC || r[1] !== 0x02)
+            throw new Error(r[2] === 0xE1 ? 'Sblocco PW=11 fallito: batch non scritto' : 'Batch rifiutato o risposta non valida');
+        const written = r[2] | (r[3] << 8), skipped = r[4] | (r[5] << 8);
+        if (written !== chunk.length || skipped !== 0)
+            throw new Error(`Batch incompleto: ${written}/${chunk.length}, ${skipped} saltati. SAVE non eseguito`);
+        ok += written; skip += skipped;
         fparProgress((i + chunk.length) / params.length * 100);
     }
     log(`  ${label}: scritti ${ok}, saltati ${skip} (read-only/inesistenti)`, 'FTD30');
+    await fparVerifyAll(node, params, label);
     const sv = await fparCmd([0xFC, 0x03, node], 8000);
     const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
     log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
+    if (!saveOk) throw new Error('SAVE fallito: persistenza non confermata');
     // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
     const verifyOk = await fparVerifyNode(node, params, label);
     return { ok, skip, saveOk, verifyOk };
+}
+
+async function fparVerifyAll(node, params, label){
+    let errors = 0;
+    for (const p of params) {
+        const r = await fparCmd([0xFC, 0x04, node, p.index & 255, p.index >> 8], 5000);
+        if (r.length !== 8 || r[0] !== 0xFC || r[1] !== 4 || r[2] !== 0 || ![1,2,4].includes(r[7]))
+            throw new Error(`P${p.index}: lettura fallita. SAVE non eseguito`);
+        const mask = r[7] === 4 ? 0xFFFFFFFF : (r[7] === 2 ? 0xFFFF : 0xFF);
+        const got = (r[3] | (r[4]<<8) | (r[5]<<16) | (r[6]<<24)) >>> 0;
+        const expected = (p.value & mask) >>> 0;
+        if (got !== expected) {
+            errors++;
+            log(`${label} P${p.index}: letto=${got}, atteso=${expected}`, 'FTD30');
+        }
+    }
+    if (errors) throw new Error(`${errors} discrepanze su ${params.length}: SAVE non eseguito (valori in RAM già modificati)`);
+    log(`${label}: verifica completa ${params.length}/${params.length} OK prima del SAVE`, 'FTD30');
 }
 
 // Parametri "stabili" di controllo (rileggono esattamente il valore scritto).
@@ -2272,7 +2303,7 @@ function fparPrep(arr, node){
     const c = arr.map(p => ({ ...p }));
     const set = (idx, val) => { const e = c.find(p => p.index === idx); if (e) e.value = val; else c.push({ index: idx, value: val }); };
     set(1, node);   // DeviceID = numero nodo
-    set(21, 0);     // app FTD30 disabilitata
+    if (c.find(p => p.index === 21)?.value !== 0) throw new Error('P21 non valido');
     return c;
 }
 
@@ -2329,7 +2360,12 @@ async function fparRestoreAll(){
     FPAR.busy = true; FQ('fparRestoreBtn').disabled = true;
     try {
         if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
-        // PRE-CHECK nodi: 1 e 2 distinti presenti?
+        const capability = await fparCmd([0xFC, 0x01], 5000).catch(() => {
+            throw new Error('Firmware senza sblocco verificato: serve V12.1.4. Nessun parametro scritto');
+        });
+        if (capability.length !== 3 || capability[0] !== 0xFC || capability[1] !== 1 || capability[2] !== 1)
+            throw new Error('Capacità sblocco verificato assente. Nessun parametro scritto');
+        // Both addresses must be present; duplicate-ID recovery is not part of this repair.
         fparStatus(true, 'Verifica nodi…');
         const n1 = await fparReadParam(1, 1);   // node1 (id=1) presente?
         const n2 = await fparReadParam(2, 1);   // node2 (id=2) presente?
@@ -2340,15 +2376,14 @@ async function fparRestoreAll(){
             // CONFIG NORMALE (1 e 2 distinti) -> restore di entrambi i nodi
             fparProgress(0);
             const r1 = await fparRestoreNode(1, fparPrep(FPAR.set, 1), 'NODE 1');
-            const r2 = await fparRestoreNode(2, fparPrep(FPAR.set, 2), 'NODE 2');
             fparProgress(100);
-            const allOk = r1.saveOk && r2.saveOk && r1.verifyOk && r2.verifyOk;
-            log(`=== Ripristino COMPLETATO (node1 ${r1.ok}w/${r1.skip}s, node2 ${r2.ok}w/${r2.skip}s) ===`, 'FTD30');
+            const allOk = r1.saveOk && r1.verifyOk;
+            log(`=== Correzione NODE 1 ${allOk ? 'COMPLETATA' : 'NON CONFERMATA'} (${r1.ok} scritti); NODE 2 NON MODIFICATO ===`, 'FTD30');
             fparStatus(allOk, allOk ? 'Completato ✓ (verificato)' : 'Completato con AVVISI (vedi log)');
             log('>>> Spegni e riaccendi i FTD30 per applicare i parametri salvati.', 'FTD30');
         } else {
             // ANOMALIA (id duplicati o un nodo mancante) -> sequenza guidata
-            await fparGuidedRecovery();
+            throw new Error('Servono nodi 1 e 2 distinti: nessun ripristino automatico in questa modalità');
         }
     } catch (e) {
         log('Errore restore FTD30: ' + (e.message || e), 'FTD30');
@@ -2360,24 +2395,72 @@ async function fparRestoreAll(){
 
 FQ('fparSetFile').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
-    FPAR.set = fparParsePrm(await f.text());
-    FQ('fparSetLabel').textContent = `✓ set: ${f.name} (${FPAR.set.length} par)`;
+    if (FPAR.busy) return;
+    try {
+        FPAR.set = fparParsePrm(await f.text());
+        FQ('fparSetLabel').textContent = `✓ set: ${f.name} (${FPAR.set.length} par)`;
+    } catch(e) {
+        FPAR.set = null;
+        log(`Set rifiutato: ${e.message}`, 'FTD30');
+        FQ('fparSetLabel').textContent = 'Set non valido: scegli un altro .prm';
+    }
     FQ('fparRestoreBtn').disabled = !FPAR.set;
 });
 FQ('fparRestoreBtn').addEventListener('click', fparRestoreAll);
 
+async function fparReadDiagnostic(){
+    if (FPAR.busy) return;
+    FPAR.busy = true;
+    FQ('fparDiagnosticBtn').disabled = true;
+    FQ('fparRestoreBtn').disabled = true;
+    const entries = [
+        ['Statusword', 0x6041], ['Controlword', 0x6040],
+        ['Mode requested', 0x6060], ['Mode actual', 0x6061],
+        ['Voltage (dV)', 0x3217], ['RPM', 0x3218],
+        ['Alarm0', 0x3204], ['Alarm1', 0x3205],
+        ['Input0', 0x3000], ['P1 DeviceID', 0x2001],
+        ['P21 Custom Program', 0x2015], ['P67 BaseSpeed', 0x2043],
+        ['P78 MaxSpeed', 0x204E], ['P84 AccRamp', 0x2054],
+        ['P85 DecRamp', 0x2055], ['P200 Poles', 0x20C8],
+    ];
+    try {
+        if (!FPAR.char) await fparConnect();
+        log('=== DIAGNOSTICA SOLA LETTURA: nessun unlock, write o SAVE ===', 'FTD30');
+        log('La connessione BLE richiede HOME/STOP; tenere i motori fermi.', 'FTD30');
+        for (const [name, od] of entries) {
+            // FC 04 addresses OD as 0x2000 + index; no firmware change needed.
+            const up = await fparReadParam(1, od - 0x2000);
+            const down = await fparReadParam(2, od - 0x2000);
+            const fmt = v => v === null ? 'NON LETTO (timeout/abort)' : `${v} (0x${v.toString(16).toUpperCase()})`;
+            log(`${name} [0x${od.toString(16)}]: UP=${fmt(up)} | DOWN=${fmt(down)}`, 'FTD30');
+        }
+        fparStatus(true, 'Diagnostica terminata: vedi console');
+        log('=== FINE DIAGNOSTICA: nessun parametro modificato ===', 'FTD30');
+    } catch(e) {
+        log(`Diagnostica interrotta: ${e.message || e}`, 'FTD30');
+        fparStatus(false, 'Diagnostica interrotta');
+    } finally {
+        FPAR.busy = false;
+        FQ('fparDiagnosticBtn').disabled = false;
+        FQ('fparRestoreBtn').disabled = !FPAR.set;
+        if (FPAR.device && FPAR.device.gatt.connected) FPAR.device.gatt.disconnect();
+    }
+}
+FQ('fparDiagnosticBtn').addEventListener('click', fparReadDiagnostic);
+
 // Pre-carica il set da remoto (repo), così non serve sceglierlo ogni volta.
 // Sovrascrivibile con un file .prm locale (il <label> è un file-pick).
-const FTD30_REMOTE_SET = `${FIRMWARE_BASE}/FTD30/MASTER_RBTV01.prm`;
+const FTD30_REMOTE_SET = `${FIRMWARE_BASE}/FTD30/waz_nodo2.prm`;
 (async function fparLoadRemote(){
     try {
         const t = await fetch(`${FTD30_REMOTE_SET}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error('set'); return r.text(); });
+        if (FPAR.set || FPAR.busy) return; // never replace a manually selected set
         FPAR.set = fparParsePrm(t);
-        FQ('fparSetLabel').textContent = `✓ set da remoto (${FPAR.set.length} par) · …o carica .prm`;
+        FQ('fparSetLabel').textContent = `✓ waz_nodo2.prm da remoto (${FPAR.set.length} par) · …o carica .prm`;
         FQ('fparRestoreBtn').disabled = !FPAR.set;
         log(`FTD30: set caricato da remoto (${FPAR.set.length} par)`, 'FTD30');
     } catch (e) {
-        // remoto non disponibile: resta il caricamento locale dal file-pick
+        log('Set remoto non disponibile: carica waz_nodo2.prm dal file-pick. Nessun fallback al vecchio MASTER.', 'FTD30');
     }
 })();
 </script>
