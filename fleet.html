@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.3</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.4</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -208,6 +208,7 @@
       <button class="modebtn" data-mode="display">Display</button>
       <button class="modebtn" data-mode="both">Entrambi</button>
       <button class="modebtn" data-mode="parameters">Parametri (solo nodo 1)</button>
+      <button class="modebtn" data-mode="firmware_parameters">Firmware .4 + parametri</button>
     </div>
     <div class="bar">
       <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
@@ -901,7 +902,7 @@ function updateEmptyState() {
   const waitingCount = $('deviceList').querySelectorAll('.device').length;
   const hasRows = rows.size > 0;
   $('queueCount').textContent = waitingCount;
-  const needsFirmware = fleetMode === 'firmware' || fleetMode === 'both';
+  const needsFirmware = ['firmware', 'both', 'firmware_parameters'].includes(fleetMode);
   $('updateAllBtn').disabled = !hasRows || busy || (needsFirmware && !firmwareBytes);
   let empty = $('deviceList').querySelector('.empty');
   if (waitingCount === 0 && !empty) {
@@ -1205,11 +1206,15 @@ async function fleetParametersOne(device, progress) {
 }
 
 async function updateSequence(targetRows) {
-  const needParams = fleetMode === 'parameters';
-  const needFw  = (fleetMode === 'firmware' || fleetMode === 'both');
+  const needParams = fleetMode === 'parameters' || fleetMode === 'firmware_parameters';
+  const needFw  = ['firmware', 'both', 'firmware_parameters'].includes(fleetMode);
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
+  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.4') {
+    $('selMsg').textContent = 'Serve il pacchetto V12.1.4: ricarica la pagina prima di aggiornare.';
+    return;
+  }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
     $('selMsg').textContent = '⚠ I .tft del display non sono caricati. Ricarica la pagina.';
     return;
@@ -1226,7 +1231,11 @@ async function updateSequence(targetRows) {
     moveToCurrent(row);
     let res = { success: true, motors: false, lastErr: '' };
     if (needFw) res = await runDeviceJob(row, 'firmware');
-    if (needParams) {
+    if (res.success && !res.motors && needFw && (needParams || needTft)) {
+      setState(row, 'connecting', 'Riavvio dopo firmware…');
+      await new Promise(r => setTimeout(r, AFTER_FW_REBOOT_MS));
+    }
+    if (res.success && !res.motors && needParams) {
       try {
         await fleetParametersOne(row.device, (pct,note) => {
           setState(row, 'flashing', note); row.prog.style.width = pct + '%';
@@ -1237,12 +1246,6 @@ async function updateSequence(targetRows) {
       }
     }
     if (res.success && !res.motors && needTft) {
-      if (needFw) {
-        // appena flashato il firmware la macchina si riavvia: dalle tempo di
-        // tornare sul bus e ripubblicare prima di riconnettere per il display.
-        setState(row, 'connecting', 'Riavvio dopo firmware…');
-        await new Promise(r => setTimeout(r, AFTER_FW_REBOOT_MS));
-      }
       res = await runDeviceJob(row, 'nextion');
     }
 
@@ -1253,7 +1256,7 @@ async function updateSequence(targetRows) {
         serial: row.device.name || row.device.id,
         success: true,
         motors: false,
-        mode: needParams ? 'Parametri nodo 1' : fleetMode === 'firmware' ? `Firmware ${firmwareVersion}` :
+        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodo 1` : fleetMode === 'firmware' ? `Firmware ${firmwareVersion}` :
               fleetMode === 'display' ? 'Display' : `Firmware ${firmwareVersion} + display`,
         duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
         message: '',
@@ -1266,7 +1269,7 @@ async function updateSequence(targetRows) {
         serial: row.device.name || row.device.id,
         success: false,
         motors: res.motors,
-        mode: needParams ? 'Parametri nodo 1' : fleetMode === 'firmware' ? 'Firmware' : fleetMode === 'display' ? 'Display' : 'Firmware + display',
+        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodo 1` : fleetMode === 'firmware' ? 'Firmware' : fleetMode === 'display' ? 'Display' : 'Firmware + display',
         duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
         message: res.lastErr || 'fallito',
       });
@@ -1305,6 +1308,7 @@ document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', (
   fleetMode = b.dataset.mode;
   document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
   $('updateAllBtn').textContent =
+    fleetMode === 'firmware_parameters' ? 'Aggiorna firmware .4 + parametri nodo 1 selezionati' :
     fleetMode === 'parameters' ? 'Aggiorna parametri nodo 1 selezionati' : fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
     fleetMode === 'display'  ? 'Aggiorna display selezionati'  : 'Aggiorna firmware + display selezionati';
   updateEmptyState();

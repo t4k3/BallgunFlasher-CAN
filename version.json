@@ -1,6 +1,6 @@
 {
   "flasher": "1.5.23",
-  "fleet": "0.8.3",
+  "fleet": "0.8.4",
   "firmware": "V12.1.4",
   "internal_ota": {
     "default": "sodium",
