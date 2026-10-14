@@ -1,4 +1,28 @@
-# Portale interno 1.5.25 / Fleet 1.0.2 — V12.1.6
+# Portale interno 1.5.26 / Fleet 1.0.3 — V12.1.7
+
+Aggiornamento STOP e diagnostica del 14 ottobre 2026:
+
+- V12.1.7 sodio: 885472 byte; V12.1.7-LI10S litio: 885488 byte.
+- Comando STOP invariato (Disable Operation, 0x0007), ora con ACK e
+  rilettura statusword indipendenti per nodo. Non equivale a Disable Voltage.
+- STOP non completato in caso di timeout, abort o stato ancora abilitato:
+  START bloccato, allarme e retry a 1 secondo, senza annullare SDO pendenti.
+- Completamento solo con RPM freschi successivi alla conferma del driver,
+  sotto la soglia di arresto preesistente. Nessun azzeramento fittizio RPM.
+- Pulsante Wait durante arresto. Rampe, parametri FTD30 e soglie CAN invariati.
+- Diagnostica cumulativa bit/form/stuff/ACK, arbitraggio separato, bus-off,
+  ritorni error-active e scarti della coda RX; riepilogo massimo ogni 5 secondi.
+  L'API IDF non espone un flag CRC separato; arbitraggio perso non prova un guasto.
+- Test C host riproducono il falso STOP della .6 e verificano la correzione;
+  regressioni avvio, batteria, BLE e SDO passate. Build ESP-IDF 6.1 dei due
+  profili e verifica dei descrittori eseguite. Prova fisica ancora necessaria.
+
+La release non dimostra risolta la causa primaria di CHECK CABLE o la
+magnetizzazione fisica. Per il collaudo usare prima una sola macchina e solo
+aggiornamento firmware: non riscrivere i parametri. Binari precedenti conservati
+nei percorsi versionati per rollback; hash correnti in `version.json`.
+
+## Documentazione storica V12.1.6
 
 Aggiornamento 14 ottobre 2026: catalogo e binario condiviso puntano a V12.1.6
 (sodio, 884176 byte) e V12.1.6-LI10S (litio, 884192 byte).

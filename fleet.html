@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.2</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.3</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -1238,8 +1238,8 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.6') {
-    $('selMsg').textContent = 'Serve il pacchetto V12.1.6: ricarica la pagina prima di aggiornare.';
+  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.7') {
+    $('selMsg').textContent = 'Serve il pacchetto V12.1.7: ricarica la pagina prima di aggiornare.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
