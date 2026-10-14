@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.26</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.27</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.26</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.27</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +270,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.7 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.8 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -340,7 +340,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.26 · OTA interno V12.1.7 / V12.1.7-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.27 · OTA interno V12.1.8 / V12.1.8-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1555,17 +1555,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.7",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.7.bin",
-        "size": 885472,
-        "sha256": "d3de7b4d1305d602d838966397ac3d076aad659430ca920b23ac3394ab5b140d"
+        "version": "V12.1.8",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.8.bin",
+        "size": 887184,
+        "sha256": "604bb326e6f7a92762a8615613be4615ce28ce337132909167f92090ac37c373"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.7-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.7-LI10S.bin",
-        "size": 885488,
-        "sha256": "524d74ce1e3b0899136555a680237f10f3b292a0d6828a6790299ae12d487dbd"
+        "version": "V12.1.8-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.8-LI10S.bin",
+        "size": 887200,
+        "sha256": "e2f7b004d4969f1b1a417eeabba5a657819c27778a70a633da12a672e38c4e64"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
@@ -2205,7 +2205,12 @@ function fparParsePrm(text){
 }
 
 function fparOnNotify(ev){
-    const v = new Uint8Array(ev.target.value.buffer);
+    const value = ev.target.value;
+    const v = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const expected = FPAR.identityExpected;
+    if (expected && (v[1] !== 5 || (v.length >= 14 &&
+        (v[3] !== expected.node || v[4] !== (expected.index&255) || v[5] !== (expected.index>>8) ||
+         v[6] !== expected.sub || v[8] !== expected.offset)))) return;
     if (v.length >= 2 && v[0] === 0xFC && FPAR.waiter) { const w = FPAR.waiter; FPAR.waiter = null; w(v); }
 }
 function fparWaitReply(ms){
@@ -2408,12 +2413,67 @@ FQ('fparSetFile').addEventListener('change', async e => {
 });
 FQ('fparRestoreBtn').addEventListener('click', fparRestoreAll);
 
+// Identity only: raw OD index, explicit subindex, six-byte pages for MTU=23.
+async function fparReadIdentity(node,index,sub){
+    const data=[]; let total=null;
+    for(let offset=0;offset<=64;){
+        FPAR.identityExpected={node,index,sub,offset};
+        let r;
+        try { r=await fparCmd([0xFC,5,node,index&255,index>>8,sub,offset],5000); }
+        catch(e){ return {error:'TIMEOUT/ERRORE BLE: '+(e.message||e)}; }
+        finally { FPAR.identityExpected=null; }
+        if(r.length===3 && r[2]===0xEE) return {error:'MOTORI ABILITATI: richiesta rifiutata'};
+        if(r.length<14 || r[0]!==0xFC || r[1]!==5 || r[3]!==node || r[4]!==(index&255) ||
+            r[5]!==(index>>8) || r[6]!==sub || r[8]!==offset) return {error:'RISPOSTA NON VALIDA'};
+        const abort=(r[10]|r[11]<<8|r[12]<<16|r[13]<<24)>>>0;
+        if(r[2]!==0){
+            if(r[2]===2) return {error:([0x06020000,0x06090011].includes(abort)?'NON SUPPORTATO':'SDO ABORT')+
+                ' (0x'+abort.toString(16).padStart(8,'0')+')'};
+            return {error:({1:'TIMEOUT CAN',3:'RISPOSTA SDO NON VALIDA',4:'DATO OLTRE 64 BYTE',
+                5:'NON PRONTO: attendere HOME, STOP e RPM aggiornati',6:'INVIO CAN FALLITO'})[r[2]]||'STATO NON VALIDO'};
+        }
+        if(r[7]>64 || r[9]>6 || r.length!==14+r[9] || offset+r[9]>r[7] ||
+            (total!==null && total!==r[7])) return {error:'LUNGHEZZA NON VALIDA'};
+        total=r[7]; data.push(...r.slice(14)); offset+=r[9];
+        if(offset===total) return {data:Uint8Array.from(data)};
+        if(!r[9]) return {error:'RISPOSTA SENZA AVANZAMENTO'};
+    }
+    return {error:'LUNGHEZZA NON VALIDA'};
+}
+function fparFormatIdentity(result,text){
+    if(result.error) return result.error;
+    const bytes=result.data;
+    const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(' ');
+    if(text) {
+        const value=new TextDecoder().decode(bytes).replace(/\0+$/g,'').replace(/[\x00-\x1f\x7f]/g,'?');
+        return `${JSON.stringify(value)}${value==='FF.00' ? ' (segnaposto Bystorm, non identifica la release)' : ''} [hex ${hex}]`;
+    }
+    if(bytes.length!==4) return `FORMATO INATTESO (${bytes.length} byte): ${hex}`;
+    const value=new DataView(bytes.buffer,bytes.byteOffset,4).getUint32(0,true);
+    return `${value} (0x${value.toString(16).padStart(8,'0')})`;
+}
+async function fparLogIdentities(){
+    const cap=await fparCmd([0xFC,1],5000);
+    if(cap.length!==3 || cap[1]!==1 || !(cap[2]&4) || cap[2]===0xEE) {
+        log('Identità FTD30: serve ESP32 V12.1.8 o successivo. Nessuna versione driver dedotta.', 'FTD30'); return;
+    }
+    const objects=[['Nome driver',0x1008,0,true],['Versione hardware',0x1009,0,true],
+        ['Versione firmware FTD30',0x100A,0,true],['Vendor ID',0x1018,1,false],
+        ['Product code',0x1018,2,false],['Revisione identità (non versione firmware)',0x1018,3,false],
+        ['Seriale driver',0x1018,4,false]];
+    for(const [label,index,sub,text] of objects){
+        const up=await fparReadIdentity(1,index,sub), down=await fparReadIdentity(2,index,sub);
+        log(`${label} [0x${index.toString(16)}:${sub}]: UP=${fparFormatIdentity(up,text)} | DOWN=${fparFormatIdentity(down,text)}`,'FTD30');
+    }
+}
+
 async function fparReadDiagnostic(){
     if (FPAR.busy) return;
     FPAR.busy = true;
     FQ('fparDiagnosticBtn').disabled = true;
     FQ('fparRestoreBtn').disabled = true;
     const entries = [
+        ['Firmware FTD30 major.minor (patch non esposta)', 0x323C],
         ['Statusword', 0x6041], ['Controlword', 0x6040],
         ['Mode requested', 0x6060], ['Mode actual', 0x6061],
         ['Voltage (dV)', 0x3217], ['RPM', 0x3218],
@@ -2431,9 +2491,12 @@ async function fparReadDiagnostic(){
             // FC 04 addresses OD as 0x2000 + index; no firmware change needed.
             const up = await fparReadParam(1, od - 0x2000);
             const down = await fparReadParam(2, od - 0x2000);
-            const fmt = v => v === null ? 'NON LETTO (timeout/abort)' : `${v} (0x${v.toString(16).toUpperCase()})`;
+            const fmt = v => v === null ? 'NON LETTO (timeout/abort)' :
+                od===0x323C ? `${v>>>8}.${v&255} (raw 0x${v.toString(16).toUpperCase()}; formato verificato su ELF Bystorm 3.8.0)` :
+                `${v} (0x${v.toString(16).toUpperCase()})`;
             log(`${name} [0x${od.toString(16)}]: UP=${fmt(up)} | DOWN=${fmt(down)}`, 'FTD30');
         }
+        await fparLogIdentities();
         fparStatus(true, 'Diagnostica terminata: vedi console');
         log('=== FINE DIAGNOSTICA: nessun parametro modificato ===', 'FTD30');
     } catch(e) {

@@ -1,4 +1,42 @@
-# Portale interno 1.5.26 / Fleet 1.0.3 — V12.1.7
+# Portale interno 1.5.27 / Fleet 1.0.4 — V12.1.8
+
+Diagnostica identità FTD30 del 14 ottobre 2026:
+
+- Lettura UP/DOWN di firmware major.minor tramite `0x323C:0`, già
+  disponibile via FC04 sui firmware ESP32 precedenti: nessun update obbligatorio
+  per questo confronto. La patch non è esposta da questo registro.
+- Nuovo FC05 in V12.1.8 per `0x1008/1009/100A:0` e `0x1018:1..4`;
+  upload SDO expedited/segmented, limite 64 byte, pagine BLE da massimo 20 byte.
+  Timeout, abort con codice, formato errato e oggetto non supportato distinti.
+- Solo HOME/Idle, nessun arresto pendente, motori disabilitati e RPM recenti
+  sotto 50; nessun unlock, scrittura parametri, SAVE o comando motore.
+- Nessuna variazione ad avvio, STOP, rampe o soglie CHECK CABLE.
+- Build sodio 887184 byte; litio 887200 byte. Hash in `version.json`.
+  Test parser C con ASan/UBSan, helper CAN reale con trasporto simulato e
+  paginazione/diagnostica JS passati. Lettura su FTD30 fisici ancora da eseguire.
+
+### Evidenza dal pacchetto Bystorm fornito dall'utente
+
+Analizzato localmente `FTD30_REV3.8.0-0_240725.elf`, SHA-256
+`f2e8265dfeb04386dab0dce4d2ab9e2c8eb3ef2524fd20e07592bdd20c9efe43`.
+Il file proprietario non viene pubblicato nel repository.
+
+- Header a `0x08024000`, campo FirmwareVersion a offset `0x50`:
+  `0x03080000`; changelog: 3.8.0, 2024-07-25.
+- DWARF: `OUT_FW_VERSION=60`. `CO_OD_ReadEntry` a `0x08029a04`
+  mappa `0x3200..0x323F` su `VarOutput[index-0x3200]` a 16 bit.
+- `_Exec` a `0x08036b84..0x08036b8e` legge Header.FirmwareVersion,
+  esegue shift destro di 16 e scrive `VarOutput[60]`: quindi `0x323C`
+  restituisce `0x0308` in questa release. La stessa mappa sulle release
+  precedenti resta da confermare; conservare sempre il valore raw.
+- Tabella `CO_ODE`: `0x1008:0` punta a `STM32F303`, `0x1009:0` e
+  `0x100A:0` puntano entrambi a `FF.00`. Non usare questi segnaposto
+  per concludere che i firmware dei nodi siano uguali.
+- Il changelog 3.2.0 cita correzioni a baudrate e scrittura parametri CANopen;
+  3.4.0 imposta CAN a 500 kbit/s di default; 3.8.0 corregge protezione F07.
+  Questo non dimostra che CHECK CABLE sia causato dalla versione del driver.
+
+## Documentazione storica V12.1.7
 
 Aggiornamento STOP e diagnostica del 14 ottobre 2026:
 
