@@ -1,7 +1,8 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync(require('node:path').join(__dirname,'../fleet.html'),'utf8');
 new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]);
-const source=html.match(/async function fleetParametersOne\([^]*?^}/m)[0];
+const loader=html.match(/async function loadFleetParameterSet\([^]*?^}/m)[0];
+const source='let fleetParameterSet=null;\n'+loader+'\n'+html.match(/async function fleetParametersOne\([^]*?^}/m)[0];
 const prm=fs.readFileSync(require('node:path').join(__dirname,'../FTD30/waz_nodo2.prm'),'utf8');
 async function run(fail){
  const calls=[],values=new Map();let notify;
@@ -15,7 +16,7 @@ async function run(fail){
    notify({target:{value:new DataView(Uint8Array.from(r).buffer)}});
   }};
  const dev={name:'test',gatt:{connected:true,connect:async()=>({getPrimaryService:async()=>({getCharacteristic:async()=>chr})}),disconnect(){this.connected=false;}}};
- const c={Uint8Array,AbortController,OTA_SERVICE_UUID:'s',OTA_CHAR_UUID:'c',log(){},fetch:async()=>({ok:true,text:async()=>prm}),
+ const c={Uint8Array,AbortController,URL,TextDecoder,crypto:require('node:crypto').webcrypto,OTA_SERVICE_UUID:'s',OTA_CHAR_UUID:'c',log(){},fetch:async()=>({ok:true,arrayBuffer:async()=>Uint8Array.from(Buffer.from(prm)).buffer}),
   setTimeout:(f,n)=>n===1200?setTimeout(f,0):setTimeout(f,n),clearTimeout};
  vm.createContext(c);vm.runInContext(source,c);
  let error;try{await c.fleetParametersOne(dev,()=>{});}catch(e){error=e;}

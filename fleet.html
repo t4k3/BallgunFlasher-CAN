@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.5</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.1</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -1121,14 +1121,33 @@ async function runDeviceJob(row, kind) {
   return { success, motors, lastErr };
 }
 
-// Separate repair operation: no OTA, no Nextion update, no automatic retry
-// after partial parameter writes. FC 04 reads and FC 02/03 writes target node 1 only.
-async function fleetParametersOne(device, progress) {
-  const res = await fetch('FTD30/waz_nodo2.prm', {cache:'no-store'});
-  if (!res.ok) throw new Error('Set waz_nodo2.prm non disponibile');
+let fleetParameterSet = null;
+async function loadFleetParameterSet() {
+  if (fleetParameterSet) return fleetParameterSet;
+  const expectedHash = '725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2';
+  let bytes;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const url = new URL('FTD30/waz_nodo2.prm', 'https://t4k3.github.io/BallgunFlasher-CAN/');
+      url.searchParams.set('sha', expectedHash);
+      const res = await fetch(url.href, {cache:'no-store', signal:controller.signal});
+      if (!res.ok) throw new Error(`Set waz_nodo2.prm non disponibile (HTTP ${res.status})`);
+      bytes = await res.arrayBuffer();
+      break;
+    } catch (e) {
+      if (attempt === 3) throw e;
+      log(`Download parametri: tentativo ${attempt} fallito; ritento…`);
+    } finally { clearTimeout(timer); }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hash = Array.from(new Uint8Array(digest), x => x.toString(16).padStart(2,'0')).join('');
+  if (hash !== expectedHash) throw new Error('Set parametri diverso da quello approvato (SHA-256)');
   let inDrive = false;
   const params = [];
-  for (const raw of (await res.text()).split(/\r?\n/)) {
+  for (const raw of new TextDecoder().decode(bytes).split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith('[')) {inDrive = line === '[Drive]'; continue;}
     const m = inDrive && line.match(/^(\d+)\s*,\s*(-?\d+)\s*,/);
@@ -1138,6 +1157,14 @@ async function fleetParametersOne(device, progress) {
       params.some(p=>p.index>1023 || !Number.isSafeInteger(p.value) || p.value < -2147483648 || p.value > 4294967295) ||
       params.find(p=>p.index===21)?.value !== 0) throw new Error('Set parametri non valido');
   params.find(p=>p.index===1).value = 1;
+  fleetParameterSet = Object.freeze(params.map(p => Object.freeze(p)));
+  log('Set waz_nodo2.prm caricato e verificato: disponibile per tutto il lotto, solo nodo 1.');
+  return fleetParameterSet;
+}
+
+// No automatic retry after partial writes; all parameter commands target node 1.
+async function fleetParametersOne(device, progress) {
+  const params = await loadFleetParameterSet();
   let chr, waiter = null;
   const notify = ev => {
     const v = new Uint8Array(ev.target.value.buffer, ev.target.value.byteOffset, ev.target.value.byteLength);
@@ -1224,6 +1251,25 @@ async function updateSequence(targetRows) {
   $('addBtn').disabled = true;
   rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
   renderKnownDevices();
+
+  // Acquire and validate once, before any firmware or parameter write.
+  if (needParams) {
+    try {
+      $('selMsg').textContent = 'Caricamento e verifica set parametri…';
+      await loadFleetParameterSet();
+      $('selMsg').textContent = '';
+    } catch (e) {
+      const message = `Lotto non avviato: ${e.message || e}. Nessuna macchina modificata.`;
+      $('selMsg').textContent = message;
+      log(message);
+      busy = false;
+      $('addBtn').disabled = false;
+      rows.forEach(r => { r.retryBtn.disabled = false; r.reselectBtn.disabled = false; });
+      renderKnownDevices();
+      updateEmptyState();
+      return;
+    }
+  }
 
   let okCount = 0, failCount = 0;
   for (const row of targetRows) {
