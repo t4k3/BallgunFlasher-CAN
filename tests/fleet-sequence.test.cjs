@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(require('node:path').join(__dirname, '../fleet.html'), 'utf8');
 const source = html.match(/async function updateSequence\([^]*?^}/m)[0];
 
-async function run(mode, failure, version = 'V12.1.9') {
+async function run(mode, failure, version = 'V12.1.10') {
   const events = [], results = [], elements = {};
   const row = {device:{name:'test'}, retryBtn:{}, reselectBtn:{}, prog:{style:{}}};
   const ctx = {
@@ -35,7 +35,7 @@ async function run(mode, failure, version = 'V12.1.9') {
 (async()=>{
   let r = await run('firmware_parameters');
   assert.deepEqual(r.events,['load','firmware','wait:11000','parameters','complete:true','wait:1500']);
-  assert.match(r.results[0].mode,/V12.1.9.*Parametri nodo 1/);
+  assert.match(r.results[0].mode,/V12.1.10.*Parametri nodo 1/);
   for(const failure of ['firmware','motors']) {
     r=await run('firmware_parameters', failure);
     assert(!r.events.includes('parameters'));
@@ -54,6 +54,6 @@ async function run(mode, failure, version = 'V12.1.9') {
   assert.deepEqual(r.events,['firmware','wait:11000','nextion','complete:true','wait:1500']);
   r=await run('firmware_parameters',null,'V12.1.3');
   assert.equal(r.events.length,0);
-  assert.match(r.elements.selMsg.textContent,/V12.1.9/);
+  assert.match(r.elements.selMsg.textContent,/V12.1.10/);
   console.log('Fleet sequence: firmware + parameters, failure gates, reboot wait, separate modes passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

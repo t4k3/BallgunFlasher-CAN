@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.5</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.6</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -395,9 +395,9 @@ async function downloadFirmware() {
   if (!metaResponse.ok) throw new Error(`Catalogo firmware HTTP ${metaResponse.status}`);
   const meta = await metaResponse.json();
   const profile = meta.internal_ota?.profiles?.sodium;
-  if (meta.firmware !== 'V12.1.9' || profile?.version !== 'V12.1.9' ||
-      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.1.9.bin')
-    throw new Error('Catalogo diverso dalla release V12.1.9: aggiornamento bloccato, ricarica la pagina.');
+  if (meta.firmware !== 'V12.1.10' || profile?.version !== 'V12.1.10' ||
+      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.1.10.bin')
+    throw new Error('Catalogo diverso dalla release V12.1.10: aggiornamento bloccato, ricarica la pagina.');
   const res = await fetch(`${base}${profile.path}?cb=${Date.now()}`, { cache:'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -476,6 +476,7 @@ function otaBuildSectorPackets(sectorIndex, data) {
 // =====================================================================
 async function otaUpdateOne(device, onProgress) {
   const fw = firmwareBytes;
+  if (!fw.length) throw new Error('firmware vuoto');
   let char = null, waiter = null;
   const onNotify = ev => {
     const v = new Uint8Array(ev.target.value.buffer);
@@ -493,8 +494,8 @@ async function otaUpdateOne(device, onProgress) {
     else await char.writeValue(buf);
   };
 
-  // Traccia la disconnessione del device: a fine OTA si riavvia DA SOLO e fa
-  // cadere il link — quello è il segnale che il finalize è andato a buon fine.
+  // Attendi il riavvio solo DOPO un ACK finale verificato. La disconnessione
+  // da sola non dimostra che il trasferimento sia riuscito.
   let gotDisconnect = false, discResolve = null;
   const onDisconnect = () => { gotDisconnect = true; if (discResolve) { const f = discResolve; discResolve = null; f(); } };
   const waitForReboot = ms => new Promise(res => {
@@ -537,6 +538,7 @@ async function otaUpdateOne(device, onProgress) {
     let r = null;
     for (let a=1; a<=ENTER_RETRIES; a++) {
       const p = waitNotify(ENTER_TIMEOUT);
+      p.catch(() => {}); // timeout osservato anche se write fallisce prima
       await write([0xFE, 0x05], true);
       try { r = await p; break; }
       catch (e) { if (a === ENTER_RETRIES) throw new Error('nessuna risposta a ENTER OTA'); }
@@ -553,6 +555,7 @@ async function otaUpdateOne(device, onProgress) {
     const sc = otaCrc16(start.slice(0,18));
     start[18]=(sc>>8)&0xFF; start[19]=sc&0xFF;
     const pStart = waitNotify(20000);
+    pStart.catch(() => {});
     await write(start, true);
     r = await pStart;
     if (!(r.length>=4 && r[0]===0x00 && r[1]===0x03 && r[2]===0x00 && r[3]===0x00))
@@ -560,38 +563,37 @@ async function otaUpdateOne(device, onProgress) {
 
     // --- 3) streaming settori ---
     const nSectors = Math.ceil(fw.length / OTA_SECTOR_SIZE);
-    let s = 0;
+    let s = 0, resyncs = 0;
+    const attempts = new Array(nSectors).fill(0);
     while (s < nSectors) {
-      const isLast = (s === nSectors-1);
+      if (++attempts[s] > OTA_MAX_RETRIES) throw new Error(`settore ${s} fallito`);
       const data = fw.slice(s*OTA_SECTOR_SIZE, s*OTA_SECTOR_SIZE + OTA_SECTOR_SIZE);
       const pkts = otaBuildSectorPackets(s, data);
-      let ok = false;
-      for (let a=0; a<OTA_MAX_RETRIES && !ok; a++) {
-        const ackP = waitNotify(OTA_ACK_TIMEOUT);
-        try {
-          for (let i=0;i<pkts.length;i++) {
-            await write(pkts[i], false);
-            if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3)); // pacing Android
-          }
-        } catch (e) { if (isLast) { ok = true; break; } throw e; }
-        let ack;
-        try { ack = await ackP; }
-        catch (e) { if (isLast) { ok = true; break; } continue; }
-        if (ack.length < 4) continue;
-        const status = ack[2] | (ack[3]<<8);
-        if (status === 0x0000) ok = true;
-        else if (status === 0x0002) { s = (ack[0]|(ack[1]<<8)); ok = true; } // resync
+      const ackP = waitNotify(OTA_ACK_TIMEOUT);
+      ackP.catch(() => {}); // nessuna rejection non gestita su write fallita
+      for (let i=0;i<pkts.length;i++) {
+        await write(pkts[i], false); // errore fatale anche sull'ultimo pacchetto
+        if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3)); // pacing Android
       }
-      if (!ok) throw new Error(`settore ${s} fallito`);
+      let ack;
+      try { ack = await ackP; }
+      catch (e) { continue; }
+      if (ack.length !== 6 || otaCrc16(ack.slice(0,4)) !== ((ack[4]<<8)|ack[5])) continue;
+      const ackSector = ack[0] | (ack[1]<<8);
+      const status = ack[2] | (ack[3]<<8);
+      if (status === 0x0002) {
+        if (ackSector >= nSectors || ++resyncs > OTA_MAX_RETRIES)
+          throw new Error('riallineamento OTA non valido o ripetuto');
+        s = ackSector;
+        continue; // nessun s++: trasmetti esattamente il settore richiesto
+      }
+      if (status !== 0 || ackSector !== s) continue;
       s++;
       onProgress((s / nSectors) * 100);
     }
 
-    // --- 4) finalize: NON disconnettere. Il firmware abortisce l'OTA sulla
-    // disconnessione BLE (V20.5.1) e il finalize+reboot dura ~2,3s; un
-    // disconnect proattivo qui interrompeva il finalize e la macchina restava
-    // sulla versione vecchia. Aspetta invece che il device si riavvii DA SOLO
-    // (il link cade) = finalize riuscito.
+    // --- 4) ACK finale valido ricevuto: lascia tempo al riavvio autonomo.
+    // Questo non verifica la versione effettivamente avviata.
     await waitForReboot(8000);
   } finally {
     try { device.removeEventListener('gattserverdisconnected', onDisconnect); } catch(e){}
@@ -679,7 +681,10 @@ async function fnbleForwardRaw(bytes) {
   while (off < bytes.length) {
     const end = Math.min(off + NBLE_BLE_WRITE, bytes.length);
     let chunk = bytes.slice(off, end);
-    if (chunk.length >= 2 && chunk[0] === 0xFE) { await fnbleWrite(chunk.slice(0,1), false); chunk = chunk.slice(1); writesSinceYield++; }
+    while (chunk.length >= 2 && chunk[0] === 0xFE) {
+      await fnbleWrite(chunk.slice(0,1), false); chunk = chunk.slice(1); writesSinceYield++;
+      if (writesSinceYield >= 4) { await new Promise(r => setTimeout(r, 0)); writesSinceYield = 0; }
+    }
     await fnbleWrite(chunk, false);
     writesSinceYield++; off = end;
     if (writesSinceYield >= 4) { await new Promise(r => setTimeout(r, 0)); writesSinceYield = 0; }
@@ -1254,8 +1259,8 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.9') {
-    $('selMsg').textContent = 'Serve il pacchetto V12.1.9: ricarica la pagina prima di aggiornare.';
+  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.10') {
+    $('selMsg').textContent = 'Serve il pacchetto V12.1.10: ricarica la pagina prima di aggiornare.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {

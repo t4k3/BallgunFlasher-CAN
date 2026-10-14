@@ -12,7 +12,7 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.1.9');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.1.10');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,meta.firmware+'-LI10S');
  for(const p of Object.values(meta.internal_ota.profiles)){
   checkImage(fs.readFileSync(path.join(root,p.path)),p);

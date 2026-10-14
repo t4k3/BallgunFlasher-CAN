@@ -1,4 +1,27 @@
-# Portale interno 1.5.28 / Fleet 1.0.5 — V12.1.9
+# Portale interno 1.5.29 / Fleet 1.0.6 — V12.1.10
+
+Correzioni SDO sulla base V12.1.9, separate dallo sviluppo PDO 12.2.0.
+
+- Cleanup OTA idempotente senza ricorsione; FE00 di 2 byte per annullamento
+  attivo, settori a lunghezza esatta e ACK finale dopo verifica/boot partition.
+- STOP: gestione ACK velocità pendente e RPM freschi per ogni nodo; attesa
+  limitata prima del percorso disable confermato se il feedback manca.
+- Manutenzione bloccata anche durante jog/PWM e abbassamento attuatore;
+  bookkeeping jog azzerato da STOP senza cambiare la sequenza meccanica.
+- Nextion: preservati i chunk FE e i prefissi FE ripetuti, con pacing BLE.
+- Client OTA: niente falso successo su timeout/write-error finale; verificati
+  lunghezza/CRC/settore ACK, resync limitato senza saltare il settore richiesto.
+- Sodio V12.1.10: 886864 byte; litio V12.1.10-LI10S: 886880 byte.
+- Percorsi e SHA-256 in `version.json`; bin USB identico al profilo sodio.
+- Passano 36 scenari OTA delle funzioni reali, test Nextion, regressioni
+  Fleet/parametri/identità/batterie e suite C con ASan/UBSan. Build ESP-IDF 6.1.
+- Nessun flash o collaudo hardware in questo rilascio. Provare prima una
+  macchina con solo firmware e START/STOP. L'ACK non verifica la versione
+  effettivamente avviata. TFT, set FTD30 e soglie batteria/CHECK CABLE invariati.
+- Binari V12.1.9 conservati per rollback. Verifica locale/live:
+  `node tools/verify-release.cjs [--live]`.
+
+## Documentazione storica V12.1.9
 
 Release SDO del 14 ottobre 2026 dalla baseline 12.1.8, non dalla linea PDO:
 ACK verificati per configurazione/velocità, gate di manutenzione con STOP e

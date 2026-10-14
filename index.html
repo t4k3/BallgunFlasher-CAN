@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.28</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.29</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.28</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.29</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +270,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.9 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.10 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -340,7 +340,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.28 · OTA interno V12.1.9 / V12.1.9-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.29 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1450,6 +1450,7 @@ async function otaRunUpdate(binData) {
     cbtn.disabled = true;
     try {
         const fw = new Uint8Array(binData);
+        if (!fw.length) throw new Error('empty firmware');
         log(`firmware: ${(fw.length / 1024).toFixed(1)} KB`, 'OTA');
 
         // 1) ENTER OTA MODE (FE 05) — with retry. Android may still drop the
@@ -1457,6 +1458,7 @@ async function otaRunUpdate(binData) {
         let r = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
             const p = otaWaitNotify(7000);
+            p.catch(() => {}); // observe timeout even if the write rejects first
             await otaWrite([0xFE, 0x05], true);
             try { r = await p; break; }
             catch (e) {
@@ -1484,6 +1486,7 @@ async function otaRunUpdate(binData) {
         // START — that takes several seconds, so allow a generous timeout.
         log('sending START — device is erasing flash partition, please wait…', 'OTA');
         const p = otaWaitNotify(20000);   // `p` is loop-scoped above; declare here
+        p.catch(() => {});
         await otaWrite(start, true);
         r = await p;
         // RESPONSE: [00 03][status LE @2-3]; status 0 = ACCEPT
@@ -1494,55 +1497,49 @@ async function otaRunUpdate(binData) {
         // 3) Stream sector by sector
         const nSectors = Math.ceil(fw.length / OTA_SECTOR_SIZE);
         const tStart = Date.now();
-        let s = 0;
+        let s = 0, resyncs = 0;
+        const attempts = new Array(nSectors).fill(0);
         while (s < nSectors) {
-            const isLastSector = (s === nSectors - 1);
+            if (++attempts[s] > OTA_MAX_RETRIES)
+                throw new Error(`sector ${s} failed after ${OTA_MAX_RETRIES} retries`);
             const data = fw.slice(s * OTA_SECTOR_SIZE, s * OTA_SECTOR_SIZE + OTA_SECTOR_SIZE);
             const pkts = otaBuildSectorPackets(s, data);
-            let ok = false;
-            for (let attempt = 0; attempt < OTA_MAX_RETRIES && !ok; attempt++) {
-                const ackP = otaWaitNotify(OTA_ACK_TIMEOUT);   // arm before streaming
-                try {
-                    // V20.6.1 — gentle pacing. Android's BLE write-without-
-                    // response has no flow control: flooding a whole sector
-                    // (~23 pkts) at once can overflow the controller TX buffer
-                    // and silently drop packets → sector CRC fail → stall mid-%.
-                    // A short breather every 8 packets lets the OS flush. Adds
-                    // only ~1 s over a full firmware; harmless on desktop.
-                    for (let i = 0; i < pkts.length; i++) {
-                        await otaWrite(pkts[i], false);
-                        if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3));
-                    }
-                } catch (e) {
-                    // A write failed. On the LAST sector this is expected —
-                    // the device finalizes and reboots, dropping the BLE
-                    // link right as the transfer ends. Treat it as success.
-                    if (isLastSector) { ok = true; break; }
-                    throw e;
-                }
-                let ack;
-                try { ack = await ackP; }
-                catch (e) {
-                    // No ACK. On the last sector the device may finalize +
-                    // reboot before/instead of ACKing — that is success.
-                    if (isLastSector) { ok = true; break; }
-                    log(`sector ${s}: no ACK, retry ${attempt + 1}`, 'OTA');
-                    continue;
-                }
-                if (ack.length < 4) { log(`sector ${s}: bad ACK`, 'OTA'); continue; }
-                const ackSector = ack[0] | (ack[1] << 8);
-                const status    = ack[2] | (ack[3] << 8);
-                if (status === 0x0000) { ok = true; }
-                else if (status === 0x0002) { s = ackSector; ok = true; }   // resync
-                else { log(`sector ${s}: NACK status ${status}, retry ${attempt + 1}`, 'OTA'); }
+            const ackP = otaWaitNotify(OTA_ACK_TIMEOUT);   // arm before streaming
+            ackP.catch(() => {}); // a failed write leaves this timer pending
+            // Preserve Android pacing: a breather every 8 packets lets the
+            // controller drain its write-without-response queue.
+            for (let i = 0; i < pkts.length; i++) {
+                await otaWrite(pkts[i], false); // failure is fatal, including the final packet
+                if ((i & 7) === 7) await new Promise(r => setTimeout(r, 3));
             }
-            if (!ok) throw new Error(`sector ${s} failed after ${OTA_MAX_RETRIES} retries`);
+            let ack;
+            try { ack = await ackP; }
+            catch (e) {
+                log(`sector ${s}: no ACK, attempt ${attempts[s]}`, 'OTA');
+                continue;
+            }
+            if (ack.length !== 6 || otaCrc16(ack.slice(0, 4)) !== ((ack[4] << 8) | ack[5])) {
+                log(`sector ${s}: invalid ACK length/CRC`, 'OTA');
+                continue;
+            }
+            const ackSector = ack[0] | (ack[1] << 8);
+            const status = ack[2] | (ack[3] << 8);
+            if (status === 0x0002) {
+                if (ackSector >= nSectors || ++resyncs > OTA_MAX_RETRIES)
+                    throw new Error('invalid or repeated OTA sector resync');
+                s = ackSector;
+                continue; // send the requested sector itself; do NOT increment it
+            }
+            if (status !== 0 || ackSector !== s) {
+                log(`sector ${s}: NACK or unexpected ACK sector ${ackSector}`, 'OTA');
+                continue;
+            }
             s++;
             otaSetProgress((s / nSectors) * 100);
         }
         const secs = ((Date.now() - tStart) / 1000).toFixed(1);
         log(`✅ OTA COMPLETE — ${nSectors} sectors, ${fw.length} bytes in ${secs}s.`, 'OTA');
-        log('Device is verifying the image and rebooting on the new firmware.', 'OTA');
+        log('Final sector ACK verified. Device reboot is expected; running version not verified.', 'OTA');
         log('The BLE disconnect that follows is normal.', 'OTA');
     } catch (e) {
         log(`OTA FAILED: ${e.message || e}`, 'OTA');
@@ -1555,17 +1552,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.9",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.9.bin",
-        "size": 885520,
-        "sha256": "d8d248822dc6d68c18d68447ac948106fd2d2005eecbdfef531fe328ac1efe35"
+        "version": "V12.1.10",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.10.bin",
+        "size": 886864,
+        "sha256": "72af7bbc0dfb8631aa31073f47240455d5084cd7d4b51532933c281257c165a6"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.9-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.9-LI10S.bin",
-        "size": 885536,
-        "sha256": "60bcba1f8deeea4f3e9992cc2fcb7d7fbf6e9fdd2c740c942d8a4ce794aead50"
+        "version": "V12.1.10-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.10-LI10S.bin",
+        "size": 886880,
+        "sha256": "c63650fc5488b8fbb3240f7a765d67a2e8c3c94a7b2d137478654e9ffb4b277e"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
@@ -1895,10 +1892,14 @@ async function nbleForwardRaw(bytes) {
     while (off < bytes.length) {
         let end = Math.min(off + NBLE_BLE_WRITE, bytes.length);
         let chunk = bytes.slice(off, end);
-        if (chunk.length >= 2 && chunk[0] === 0xFE) {
+        while (chunk.length >= 2 && chunk[0] === 0xFE) {
             await nbleWrite(chunk.slice(0, 1), false);
             chunk = chunk.slice(1);
             writesSinceYield++;
+            if (writesSinceYield >= 4) {
+                await new Promise(r => setTimeout(r, 0));
+                writesSinceYield = 0;
+            }
         }
         await nbleWrite(chunk, false);
         writesSinceYield++;
