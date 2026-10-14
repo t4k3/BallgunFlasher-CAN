@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.4</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v0.8.5</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -208,7 +208,7 @@
       <button class="modebtn" data-mode="display">Display</button>
       <button class="modebtn" data-mode="both">Entrambi</button>
       <button class="modebtn" data-mode="parameters">Parametri (solo nodo 1)</button>
-      <button class="modebtn" data-mode="firmware_parameters">Firmware .4 + parametri</button>
+      <button class="modebtn" data-mode="firmware_parameters">Firmware .5 + parametri</button>
     </div>
     <div class="bar">
       <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
@@ -1175,7 +1175,7 @@ async function fleetParametersOne(device, progress) {
     await new Promise(r=>setTimeout(r,1200));
     const cap = await cmd([0xFC,1]);
     if (cap[2]===0xEE) throw new Error('MOTORI ACCESI');
-    if (cap.length!==3 || cap[1]!==1 || cap[2]!==1) throw new Error('Serve firmware V12.1.4 con password verificata');
+    if (cap.length!==3 || cap[1]!==1 || (cap[2]&3)!==3) throw new Error('Serve V12.1.5: sblocco verificato e lettura SDO corretta. Nessun parametro scritto');
     log(`${device.name}: parametri solo nodo 1, set waz_nodo2.prm; nodo 2 intatto`);
     for (let i=0;i<params.length;i+=24) {
       const chunk=params.slice(i,i+24), pkt=[0xFC,2,1,chunk.length];
@@ -1188,8 +1188,8 @@ async function fleetParametersOne(device, progress) {
     let mismatches=0;
     for(const p of params) {
       const r=await cmd([0xFC,4,1,p.index&255,p.index>>8]);
-      if(r.length!==8 || r[1]!==4 || r[2]!==0 || ![1,2,4].includes(r[7])) throw new Error(`Lettura P${p.index} fallita; SAVE non eseguito`);
-      const mask=r[7]===4?0xFFFFFFFF:r[7]===2?65535:255;
+      if(r.length!==8 || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7])) throw new Error(`Lettura P${p.index} fallita (stato=${r[2]}, byte=${r[7]}); SAVE non eseguito`);
+      const mask=r[7]===4?0xFFFFFFFF:(2**(8*r[7]))-1;
       const got=(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0;
       if(got!==((p.value&mask)>>>0)){mismatches++;log(`${device.name}: P${p.index} diverso dal set`);}
       progress(50+49*(p.index+1)/1024,'Verifica completa nodo 1…');
@@ -1211,8 +1211,8 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.4') {
-    $('selMsg').textContent = 'Serve il pacchetto V12.1.4: ricarica la pagina prima di aggiornare.';
+  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.5') {
+    $('selMsg').textContent = 'Serve il pacchetto V12.1.5: ricarica la pagina prima di aggiornare.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
@@ -1308,7 +1308,7 @@ document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', (
   fleetMode = b.dataset.mode;
   document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
   $('updateAllBtn').textContent =
-    fleetMode === 'firmware_parameters' ? 'Aggiorna firmware .4 + parametri nodo 1 selezionati' :
+    fleetMode === 'firmware_parameters' ? 'Aggiorna firmware .5 + parametri nodo 1 selezionati' :
     fleetMode === 'parameters' ? 'Aggiorna parametri nodo 1 selezionati' : fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
     fleetMode === 'display'  ? 'Aggiorna display selezionati'  : 'Aggiorna firmware + display selezionati';
   updateEmptyState();

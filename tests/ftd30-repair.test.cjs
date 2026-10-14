@@ -38,7 +38,7 @@ assert.throws(() => ctx.fparParsePrm('[Drive]\n1,2,x'), /1024/);
   ctx.FPAR.set = set;
   ctx.fparCmd = async pkt => {
     calls.push(pkt);
-    if (pkt[1] === 1) return [0xFC,1,1];
+    if (pkt[1] === 1) return [0xFC,1,3];
     assert.equal(pkt[2], 1, 'no commands writing/reading configuration on node 2');
     if (pkt[1] === 2) return [0xFC,2,pkt[3],0,0,0];
     if (pkt[1] === 3) return [0xFC,3,0];
@@ -57,13 +57,13 @@ assert.throws(() => ctx.fparParsePrm('[Drive]\n1,2,x'), /1024/);
   assert.equal(calls.filter(p => p[1] === 3).length, 0, 'no SAVE on mismatch');
 
   calls.length = 0;
-  ctx.fparCmd = async pkt => {calls.push(pkt); return pkt[1] === 1 ? [0xFC,1,1] : [0xFC,2,0xE1];};
+  ctx.fparCmd = async pkt => {calls.push(pkt); return pkt[1] === 1 ? [0xFC,1,3] : [0xFC,2,0xE1];};
   await ctx.fparRestoreAll();
   assert.equal(calls.filter(p => p[1] === 3).length,0, 'no SAVE on unlock failure');
   assert.equal(calls.filter(p => p[1] === 2).length,1, 'stop at first failed batch');
 
   calls.length=0;
-  ctx.fparCmd = async pkt => {calls.push(pkt); return [0xFC,1,0];};
+  ctx.fparCmd = async pkt => {calls.push(pkt); return [0xFC,1,1];};
   await ctx.fparRestoreAll();
   assert.equal(calls.length,1, 'old firmware refused before any writes');
   assert.equal(ctx.FPAR.busy,false);

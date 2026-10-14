@@ -1,11 +1,11 @@
-# Portale interno 1.5.23 — profili batteria OTA
+# Portale interno 1.5.24 — profili batteria OTA
 
 Nella sola scheda **BLE · WIRELESS / OTA** sono disponibili:
 
 | Selezione | Versione immagine | File |
 |---|---|---|
-| Sodio · 11S (predefinito) | V12.1.4 | `INTERNAL/OTA/naion-11s/V12.1.4.bin` |
-| Litio 36 V · 10S | V12.1.4-LI10S | `INTERNAL/OTA/liion-10s/V12.1.4-LI10S.bin` |
+| Sodio · 11S (predefinito) | V12.1.5 | `INTERNAL/OTA/naion-11s/V12.1.5.bin` |
+| Litio 36 V · 10S | V12.1.5-LI10S | `INTERNAL/OTA/liion-10s/V12.1.5-LI10S.bin` |
 
 La pagina parte sempre da Sodio, anche dopo ripristino della pagina dalla cache
 di navigazione. Il tipo batteria, la versione completa e la tensione massima sono
@@ -22,8 +22,8 @@ chip/progetto/versione, ma non hanno un hash di catalogo.
 
 ## Separazione dal portale cliente
 
-`STANDALONE/BallgunSTANDALONE.bin` è V12.1.4 (sodio), SHA-256
-`d67237a492fbff1bab477b5463b14f43a9579bc2264e1a5b8cedc903caebf73d`.
+`STANDALONE/BallgunSTANDALONE.bin` è V12.1.5 (sodio), SHA-256
+`10a4e9a7a1f4656bb4e907581fe0796b8c1f656dce7c8ff1d0ea8f953430906b`.
 Il portale cliente, la scheda USB, Fleet e le app native continuano a usare quel
 percorso condiviso. `version.json.firmware` descrive il binario standard;
 `internal_ota` descrive le due varianti selezionabili nel portale interno.
@@ -37,7 +37,7 @@ meccanismo di autenticazione al repository GitHub Pages esistente.
 Build ESP32-C6 / ESP-IDF 6.1 del 14 ottobre 2026, dal checkout canonico
 `ballgun_STANDALONE_CANBUS`. La versione base proviene dal file ESP-IDF
 `version.txt`; il profilo litio aggiunge il suffisso `-LI10S`.
-Entrambi i file sono da 883568 byte. Descrittori, checksum ESP e validation hash
+Entrambi i file sono da 883648 byte. Descrittori, checksum ESP e validation hash
 verificati con esptool. I valori completi SHA-256 sono nel catalogo `version.json`.
 
 Profilo sodio: 44 V piena carica / 30 V riserva / 26 V avviso scarica.
@@ -58,19 +58,30 @@ firmware; un successivo aggiornamento standard riporterebbe il profilo sodio.
 
 Queste verifiche non costituiscono una prova BLE o un flash fisico della macchina.
 
-## Ripristino parametri V12.1.4
+## Ripristino parametri V12.1.5
 
-Flasher 1.5.23 e Fleet 0.8.3 offrono il ripristino separato del solo nodo 1.
+Flasher 1.5.24 e Fleet 0.8.5 offrono il ripristino separato del solo nodo 1,
+oppure la sequenza firmware V12.1.5, attesa di 11 secondi, parametri nodo 1.
 Il set completo viene da `FTD30/waz_nodo2.prm`, identico al file approvato
 dall'utente, con la sola sostituzione di P1 per il nodo 1. Il nodo 2 resta intatto.
 La capability del firmware conferma il controllo dell'esito SDO della password 11
 prima di ogni batch. Tutti i 1024 parametri vengono riletti prima del SAVE;
 errori, parametri saltati o discrepanze interrompono il ripristino senza SAVE.
 La persistenza dopo spegnimento e riaccensione richiede verifica sulla macchina.
-La V12.1.4 interrompe inoltre l'avvio se una ruota non raggiunge lo stato o gli
+La V12.1.5 interrompe inoltre l'avvio se una ruota non raggiunge lo stato o gli
 RPM richiesti, invece di dichiarare completato un avvio parziale.
 
 Test locali: `node tests/ftd30-repair.test.cjs` e
 `node tests/fleet-parameters.test.cjs` verificano successo, firmware precedente,
 fallimento password e discrepanze, usando il codice reale e una connessione simulata.
 La nuova release non è stata collaudata su hardware in questa pubblicazione.
+
+La V12.1.5 corregge la dimensione dati delle risposte SDO: nella V12.1.4
+rimaneva zero, bloccando la verifica su P0 e il SAVE. Le pagine richiedono ora
+sia la capability di unlock verificato sia quella delle letture con dimensione
+corretta, prima di qualsiasi scrittura. Dimensioni sconosciute non vengono
+sostituite arbitrariamente con due byte. Le risposte segmentate non supportate
+vengono rifiutate. Il test `tests/sdo-response.test.cjs` nel repository firmware
+esegue il parser C reale insieme agli helper lettura/scrittura/SAVE; riproduce
+il fallimento sulla V12.1.4 e passa sulla correzione, con UBSan.
+Formato SDO di riferimento: https://canopennode.github.io/CANopenNode/group__CO__SDOserver.html

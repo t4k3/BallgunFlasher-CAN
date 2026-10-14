@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.23</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.24</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.23</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.24</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +270,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.4 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.5 · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -329,7 +329,7 @@
             <button class="btn-connect" id="fparDiagnosticBtn">Leggi diagnostica FTD30 (nessuna scrittura)</button>
             <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Correggi nodo 1 (nodo 2 intatto)</button>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Set waz_nodo2.prm · solo P1 cambia a 1 · verifica completa prima di SAVE · richiede firmware con sblocco verificato (V12.1.4)</div>
+            <div class="chip-info" id="fparInfo">Set waz_nodo2.prm · solo P1 cambia a 1 · verifica completa prima di SAVE · richiede firmware con sblocco verificato (V12.1.5)</div>
         </div>
     </div>
 
@@ -340,7 +340,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.23 · OTA interno V12.1.4 / V12.1.4-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.24 · OTA interno V12.1.5 / V12.1.5-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1555,17 +1555,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.4",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.4.bin",
-        "size": 883568,
-        "sha256": "d67237a492fbff1bab477b5463b14f43a9579bc2264e1a5b8cedc903caebf73d"
+        "version": "V12.1.5",
+        "path": "INTERNAL/OTA/naion-11s/V12.1.5.bin",
+        "size": 883648,
+        "sha256": "10a4e9a7a1f4656bb4e907581fe0796b8c1f656dce7c8ff1d0ea8f953430906b"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.4-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.4-LI10S.bin",
-        "size": 883568,
-        "sha256": "b17964df26992b7c783ad3d6bc3cb0821120829c4bf3d3603ec687272a1d3eb4"
+        "version": "V12.1.5-LI10S",
+        "path": "INTERNAL/OTA/liion-10s/V12.1.5-LI10S.bin",
+        "size": 883648,
+        "sha256": "2ec255b7ab9d2f2ce733a4b8b20391da4157c5dc1ef66df2c341444c454d7935"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
@@ -2268,9 +2268,9 @@ async function fparVerifyAll(node, params, label){
     let errors = 0;
     for (const p of params) {
         const r = await fparCmd([0xFC, 0x04, node, p.index & 255, p.index >> 8], 5000);
-        if (r.length !== 8 || r[0] !== 0xFC || r[1] !== 4 || r[2] !== 0 || ![1,2,4].includes(r[7]))
-            throw new Error(`P${p.index}: lettura fallita. SAVE non eseguito`);
-        const mask = r[7] === 4 ? 0xFFFFFFFF : (r[7] === 2 ? 0xFFFF : 0xFF);
+        if (r.length !== 8 || r[0] !== 0xFC || r[1] !== 4 || r[2] !== 0 || ![1,2,3,4].includes(r[7]))
+            throw new Error(`P${p.index}: lettura fallita (stato=${r[2]}, byte=${r[7]}). SAVE non eseguito`);
+        const mask = r[7] === 4 ? 0xFFFFFFFF : (2 ** (8 * r[7])) - 1;
         const got = (r[3] | (r[4]<<8) | (r[5]<<16) | (r[6]<<24)) >>> 0;
         const expected = (p.value & mask) >>> 0;
         if (got !== expected) {
@@ -2361,10 +2361,10 @@ async function fparRestoreAll(){
     try {
         if (!FPAR.char) { fparStatus(false, 'Connessione…'); await fparConnect(); }
         const capability = await fparCmd([0xFC, 0x01], 5000).catch(() => {
-            throw new Error('Firmware senza sblocco verificato: serve V12.1.4. Nessun parametro scritto');
+            throw new Error('Firmware senza sblocco verificato: serve V12.1.5. Nessun parametro scritto');
         });
-        if (capability.length !== 3 || capability[0] !== 0xFC || capability[1] !== 1 || capability[2] !== 1)
-            throw new Error('Capacità sblocco verificato assente. Nessun parametro scritto');
+        if (capability.length !== 3 || capability[0] !== 0xFC || capability[1] !== 1 || (capability[2] & 3) !== 3)
+            throw new Error('Serve V12.1.5: sblocco verificato e lettura SDO corretta. Nessun parametro scritto');
         // Both addresses must be present; duplicate-ID recovery is not part of this repair.
         fparStatus(true, 'Verifica nodi…');
         const n1 = await fparReadParam(1, 1);   // node1 (id=1) presente?
