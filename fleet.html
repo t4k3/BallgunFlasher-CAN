@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.4</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.5</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -382,15 +382,31 @@ async function logEvent(serial, type, extras = {}) {
 // Firmware
 // =====================================================================
 function extractVersion(uint8) {
-  const text = new TextDecoder('iso-8859-1').decode(uint8);
-  const m = text.match(/V\d+\.\d+\.\d+/);
-  return m ? m[0] : null;
+  if (uint8.length < 112 || uint8[0] !== 0xE9 || uint8[12] !== 13 || uint8[13] !== 0 ||
+      new DataView(uint8.buffer, uint8.byteOffset, uint8.byteLength).getUint32(32,true) !== 0xABCD5432) return null;
+  const project = new TextDecoder().decode(uint8.subarray(80,112)).split('\0')[0];
+  return project === 'BallgunSTANDALONE' ? new TextDecoder().decode(uint8.subarray(48,80)).split('\0')[0] : null;
 }
 async function downloadFirmware() {
-  const res = await fetch(`${FIRMWARE_BIN_URL}?cb=${Date.now()}`, { cache:'no-store' });
+  firmwareBytes = null;
+  firmwareVersion = null;
+  const base = 'https://t4k3.github.io/BallgunFlasher-CAN/';
+  const metaResponse = await fetch(`${base}version.json?cb=${Date.now()}`, {cache:'no-store'});
+  if (!metaResponse.ok) throw new Error(`Catalogo firmware HTTP ${metaResponse.status}`);
+  const meta = await metaResponse.json();
+  const profile = meta.internal_ota?.profiles?.sodium;
+  if (meta.firmware !== 'V12.1.9' || profile?.version !== 'V12.1.9' ||
+      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.1.9.bin')
+    throw new Error('Catalogo diverso dalla release V12.1.9: aggiornamento bloccato, ricarica la pagina.');
+  const res = await fetch(`${base}${profile.path}?cb=${Date.now()}`, { cache:'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
-  firmwareBytes = new Uint8Array(await res.arrayBuffer());
-  firmwareVersion = extractVersion(firmwareBytes) || '(sconosciuta)';
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const version = extractVersion(bytes);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)), b => b.toString(16).padStart(2,'0')).join('');
+  if (version !== profile.version || bytes.length !== profile.size || hash !== profile.sha256)
+    throw new Error('Firmware non coerente con il catalogo (versione/chip/dimensione/SHA-256): nessun aggiornamento.');
+  firmwareBytes = bytes;
+  firmwareVersion = version;
   $('targetVer').textContent = `${firmwareVersion} · ${(firmwareBytes.length/1024).toFixed(0)} KB`;
   log(`Firmware caricato: ${firmwareVersion} (${firmwareBytes.length} byte)`);
 }
@@ -1238,8 +1254,8 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.8') {
-    $('selMsg').textContent = 'Serve il pacchetto V12.1.8: ricarica la pagina prima di aggiornare.';
+  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.9') {
+    $('selMsg').textContent = 'Serve il pacchetto V12.1.9: ricarica la pagina prima di aggiornare.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {

@@ -1,4 +1,19 @@
-# Portale interno 1.5.27 / Fleet 1.0.4 — V12.1.8
+# Portale interno 1.5.28 / Fleet 1.0.5 — V12.1.9
+
+Release SDO del 14 ottobre 2026 dalla baseline 12.1.8, non dalla linea PDO:
+ACK verificati per configurazione/velocità, gate di manutenzione con STOP e
+telemetria recenti, validazione frame CAN, controllo comunicazione via RPM
+SDO/TPDO e gestione OTA disconnessione/pacchetti da 20 byte corretta.
+
+- Sodio V12.1.9: 885520 byte; litio V12.1.9-LI10S: 885536 byte.
+- Hash e percorsi nel catalogo `version.json`, validati contro i descrittori ESP.
+- Fleet rifiuta catalogo vecchio, immagine alterata, chip/versione errati o 404.
+- Gate locale/live: `node tools/verify-release.cjs [--live]`.
+- Parametri FTD30 e TFT invariati. Binari V12.1.8 conservati per rollback.
+- Test host e build verificati; nessun flash o collaudo fisico 12.1.9 eseguito.
+- Per il primo collaudo usare una sola macchina e solo aggiornamento firmware.
+
+## Documentazione storica V12.1.8
 
 Diagnostica identità FTD30 del 14 ottobre 2026:
 
