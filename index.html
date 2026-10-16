@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.30</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.31</title>
 <style>
     :root {
         color-scheme: dark;
@@ -146,7 +146,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.30</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.31</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -318,25 +318,16 @@
         <div class="device-panel ftd30">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4 M12 19v4 M1 12h4 M19 12h4" stroke="currentColor" stroke-width="2"/></svg>
-                PARAMETRI FTD30 <span class="sub">CAN · ripristino set</span>
+                CHECK FTD30 <span class="sub">CAN · sola lettura</span>
             </h2>
             <div class="status">
                 <div class="status-dot" id="fparStatusDot"></div>
                 <span id="fparStatusText">Disconnected</span>
             </div>
-            <label class="file-pick" for="fparSetFile" id="fparSetLabel">📄 carica set .prm</label>
-            <input type="file" id="fparSetFile" accept=".prm" style="display:none;" />
-            <button class="btn-connect" id="fparDiagnosticBtn">Leggi diagnostica FTD30 (nessuna scrittura)</button>
             <button class="btn-connect" id="fparCheckBtn">Check completo · entrambi i nodi (sola lettura)</button>
-            <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Correggi nodo 1 (nodo 2 intatto)</button>
-            <button class="btn-update ftd30-master" id="fparBothBtn">Ripristina ENTRAMBI · waz_nodo2.prm</button>
-            <div class="chip-info">Il ripristino di entrambi usa sempre il set remoto verificato, non il file personalizzato. Cambia solo P1: 1 per UP, 2 per DOWN. Nessun aggiornamento firmware.</div>
-            <label class="chip-info" style="display:block"><input type="checkbox" id="fparRebootConfirmed"> Ho spento e riacceso ESP32 e i due FTD30 dopo il SAVE, senza premere Start.</label>
-            <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio · entrambi i nodi</button>
-            <div class="chip-info" id="fparPending" role="status"></div>
             <pre class="chip-info" id="fparReport" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Set waz_nodo2.prm · solo P1 cambia secondo il nodo · verifica completa prima di SAVE · richiede firmware con sblocco verificato (V12.1.5). Con PDO: riavvio completo con driver alimentati, senza Start.</div>
+            <div class="chip-info" id="fparInfo">Legge entrambi i driver e confronta i parametri con waz_nodo2.prm. Nessuna scrittura. Motori fermi; con PDO, riavvio completo con driver alimentati, senza Start.</div>
         </div>
     </div>
 
@@ -347,7 +338,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.30 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.31 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2433,20 +2424,7 @@ async function fparRestoreAll(){
     }
 }
 
-FQ('fparSetFile').addEventListener('change', async e => {
-    const f = e.target.files[0]; if (!f) return;
-    if (FPAR.busy) return;
-    try {
-        FPAR.set = fparParsePrm(await f.text());
-        FQ('fparSetLabel').textContent = `✓ set: ${f.name} (${FPAR.set.length} par)`;
-    } catch(e) {
-        FPAR.set = null;
-        log(`Set rifiutato: ${e.message}`, 'FTD30');
-        FQ('fparSetLabel').textContent = 'Set non valido: scegli un altro .prm';
-    }
-    FQ('fparRestoreBtn').disabled = !FPAR.set;
-});
-FQ('fparRestoreBtn').addEventListener('click', fparRestoreAll);
+// Maintenance helpers retained for regression tests; not wired to this read-only card.
 
 // Identity only: raw OD index, explicit subindex, six-byte pages for MTU=23.
 async function fparReadIdentity(node,index,sub){
@@ -2544,19 +2522,19 @@ async function fparReadDiagnostic(){
         if (FPAR.device && FPAR.device.gatt.connected) FPAR.device.gatt.disconnect();
     }
 }
-FQ('fparDiagnosticBtn').addEventListener('click', fparReadDiagnostic);
 
 // COMPLETE CHECK / TWO-NODE RESTORE. Only FC01/04 and optional GATT reads
 // during checks. Post-reboot verification NEVER unlocks, writes or saves.
 const FPAR_CANONICAL_SHA = '725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2';
 const FPAR_PENDING_KEY = 'wazlley.ftd30.pending.v1';
-function fparReport(text){ FQ('fparReport').textContent = text; }
+function fparReport(text){ FQ('fparReport').textContent = text; log(text,'FTD30'); }
 function fparPendingRecords(){
     const records=JSON.parse(localStorage.getItem(FPAR_PENDING_KEY)||'{}');
     if (!records || typeof records!=='object' || Array.isArray(records)) throw new Error('Archivio verifiche non valido');
     return records;
 }
 function fparPendingShow(){
+    if(!FQ('fparPending'))return;
     try {
         const records=Object.values(fparPendingRecords());
         FQ('fparPending').textContent=records.length ? records.map(r=>
@@ -2585,7 +2563,9 @@ async function fparCanonical(){
     return fparParsePrm(new TextDecoder().decode(data));
 }
 async function fparValue(node,index){
-    const r=await fparCmd([0xFC,4,node,index&255,index>>8],5000);
+    let r;
+    try{r=await fparCmd([0xFC,4,node,index&255,index>>8],5000);}
+    catch(e){throw new Error(`Nodo ${node}, OD 0x${(0x2000+index).toString(16)}: ${e.message}. Il ponte BLE non ha completato la richiesta; non prova un driver assente`);}
     if(r[2]===0xEE) throw new Error('Manutenzione rifiutata: motori/PDO attivi. Riavviare ESP e driver alimentati, senza Start');
     if(r[2]===0xEF) throw new Error('BLE scollegato: verifica interrotta');
     if(r.length!==8 || r[0]!==0xFC || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7]))
@@ -2654,6 +2634,7 @@ function fparSummary(nodes,esp){
 async function fparCompleteCheck(){
     if(FPAR.busy)return;
     FPAR.busy=true;
+    FQ('fparCheckBtn').disabled=true;
     try {
         fparReport('Check in corso: sola lettura, nessun unlock/write/SAVE.');
         if(!FPAR.char)await fparConnect();
@@ -2671,7 +2652,7 @@ async function fparCompleteCheck(){
         try{fparInvalidateVerification('Check interrotto: verifica precedente non più confermata');}catch{}
         fparReport('Check NON completato: '+e.message); fparStatus(false,'Check non completato');
     }
-    finally { FPAR.busy=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
+    finally { FPAR.busy=false;FQ('fparCheckBtn').disabled=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
 }
 async function fparRestoreBoth(){
     if(FPAR.busy)return;
@@ -2741,25 +2722,6 @@ async function fparVerifyReboot(){
     finally{FPAR.busy=false;FQ('fparRebootConfirmed').checked=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();}
 }
 FQ('fparCheckBtn').addEventListener('click',fparCompleteCheck);
-FQ('fparBothBtn').addEventListener('click',fparRestoreBoth);
-FQ('fparRebootBtn').addEventListener('click',fparVerifyReboot);
-fparPendingShow();
-
-// Pre-carica il set da remoto (repo), così non serve sceglierlo ogni volta.
-// Sovrascrivibile con un file .prm locale (il <label> è un file-pick).
-const FTD30_REMOTE_SET = `${FIRMWARE_BASE}/FTD30/waz_nodo2.prm`;
-(async function fparLoadRemote(){
-    try {
-        const t = await fetch(`${FTD30_REMOTE_SET}?cb=${Date.now()}`, { cache:'no-store' }).then(r => { if(!r.ok) throw new Error('set'); return r.text(); });
-        if (FPAR.set || FPAR.busy) return; // never replace a manually selected set
-        FPAR.set = fparParsePrm(t);
-        FQ('fparSetLabel').textContent = `✓ waz_nodo2.prm da remoto (${FPAR.set.length} par) · …o carica .prm`;
-        FQ('fparRestoreBtn').disabled = !FPAR.set;
-        log(`FTD30: set caricato da remoto (${FPAR.set.length} par)`, 'FTD30');
-    } catch (e) {
-        log('Set remoto non disponibile: carica waz_nodo2.prm dal file-pick. Nessun fallback al vecchio MASTER.', 'FTD30');
-    }
-})();
 </script>
 
 </body>

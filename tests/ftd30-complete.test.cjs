@@ -3,6 +3,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const {webcrypto}=require('node:crypto');
 const root=require('node:path').resolve(__dirname,'..');
 const html=fs.readFileSync(root+'/index.html','utf8');
+const card=html.slice(html.indexOf('<!-- FTD30 PARAMETRI'),html.indexOf('<!-- COLUMN 3'));
+assert.deepEqual([...card.matchAll(/<button[^>]*id="([^"]+)"/g)].map(m=>m[1]),['fparCheckBtn'],'Only complete check is exposed');
+assert(!/id="fpar(?:SetFile|DiagnosticBtn|RestoreBtn|BothBtn|RebootBtn|RebootConfirmed)"/.test(card));
+assert.deepEqual([...html.matchAll(/FQ\('([^']+)'\)\.addEventListener/g)].map(m=>m[1]),['fparCheckBtn'],'No hidden maintenance handlers');
 const names=['fparParsePrm','fparPrep','fparRestoreNode','fparVerifyAll','fparVerifyNode','fparReadParam',
  'fparReport','fparPendingRecords','fparPendingShow','fparPendingStore','fparInvalidateVerification','fparCanonical','fparValue',
  'fparSame','fparCompare','fparEspVersion','fparSnapshot','fparSafeNodes','fparSummary',
@@ -115,5 +119,8 @@ function harness(){
  });
  await h.c.fparRestoreBoth();assert.deepEqual(JSON.parse(h.storage.pending)['casoria-id'].saved,[1]);
  assert(!h.controls.fparRebootConfirmed.checked);assert(!h.c.status.ok);
+ h=harness();h.c.fparCmd=async()=>{throw Error('timeout risposta 0xFC');};
+ await h.c.fparCompleteCheck();assert.match(h.controls.fparReport.textContent,/Nodo 1, OD 0x2001: timeout/);
+ assert(h.c.FPAR.busy===false && !h.controls.fparCheckBtn.disabled);
  console.log('PASS complete FTD30: both-node exact set, full readback, read-only checks, partial errors, persistence, identity, safety gates');
 })().catch(e=>{console.error(e);process.exitCode=1;});

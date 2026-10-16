@@ -1,4 +1,14 @@
-Flasher 1.5.30 - full FTD30 check and two-node restoration
+Flasher 1.5.31 - read-only card simplification
+
+Current UI exposes ONLY Complete check. The legacy diagnostic, local file
+picker, node-1 repair, two-node restore and post-reboot verification controls
+and their event handlers have been removed at the user's request. Existing
+maintenance functions are retained unbound for regression coverage. Saved
+checkpoints are preserved, not displayed. Errors/results are now also logged
+in the console; bridge timeouts include node and OD. This UI change does not
+fix the observed 12.2.20 bridge timeout, which still requires diagnosis.
+
+Historical 1.5.30 workflow (not accessible from the 1.5.31 card):
 
 Scope
 - Internal index.html only. Fleet and ESP firmware assets are unchanged.
