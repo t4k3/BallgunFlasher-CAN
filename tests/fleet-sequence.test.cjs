@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(require('node:path').join(__dirname, '../fleet.html'), 'utf8');
 const source = html.match(/async function updateSequence\([^]*?^}/m)[0];
 
-async function run(mode, failure, version = 'V12.1.10') {
+async function run(mode, failure, version = 'V12.2.28-PDO-FULL') {
   const events = [], results = [], elements = {};
   const row = {device:{name:'test'}, retryBtn:{}, reselectBtn:{}, prog:{style:{}}};
   const ctx = {
@@ -34,26 +34,30 @@ async function run(mode, failure, version = 'V12.1.10') {
 
 (async()=>{
   let r = await run('firmware_parameters');
-  assert.deepEqual(r.events,['load','firmware','wait:11000','parameters','complete:true','wait:1500']);
-  assert.match(r.results[0].mode,/V12.1.10.*Parametri nodo 1/);
+  assert.deepEqual(r.events,[]);
+  assert.match(r.elements.selMsg.textContent,/non la scrittura parametri/);
+  r = await run('firmware');
+  assert.deepEqual(r.events,['firmware','complete:true','wait:1500']);
+  assert.match(r.results[0].mode,/V12.2.28-PDO-FULL/);
   for(const failure of ['firmware','motors']) {
-    r=await run('firmware_parameters', failure);
+    r=await run('firmware', failure);
     assert(!r.events.includes('parameters'));
     assert(!r.events.includes('wait:11000'));
     assert.equal(r.results[0].success,false);
   }
-  r=await run('firmware_parameters','parameters');
+  r=await run('parameters','parameters');
   assert.equal(r.results[0].success,false);
   assert.equal(r.events.filter(e=>e==='parameters').length,1);
   r=await run('parameters');
   assert.deepEqual(r.events,['load','parameters','complete:true','wait:1500']);
-  r=await run('firmware_parameters','download');
+  r=await run('parameters','download');
   assert.deepEqual(r.events,['load']);
   assert.match(r.elements.selMsg.textContent,/Nessuna macchina modificata/);
   r=await run('both');
   assert.deepEqual(r.events,['firmware','wait:11000','nextion','complete:true','wait:1500']);
   r=await run('firmware_parameters',null,'V12.1.3');
   assert.equal(r.events.length,0);
-  assert.match(r.elements.selMsg.textContent,/V12.1.10/);
-  console.log('Fleet sequence: firmware + parameters, failure gates, reboot wait, separate modes passed');
+  assert.match(r.elements.selMsg.textContent,/non la scrittura parametri/);
+  assert.match(html, /data-mode="firmware_parameters" disabled/);
+  console.log('Fleet sequence: PDO combo blocked before writes; firmware, failure gates, reboot wait, separate modes passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

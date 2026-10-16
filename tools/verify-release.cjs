@@ -12,13 +12,22 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.1.10');assert.equal(sodium.version,meta.firmware);
- assert.equal(meta.internal_ota.profiles.lithium.version,meta.firmware+'-LI10S');
+ assert.equal(meta.firmware,'V12.2.28-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
+ assert.equal(meta.shared_firmware.version,'V12.1.10');
+ assert.equal(meta.shared_firmware.sha256,'72af7bbc0dfb8631aa31073f47240455d5084cd7d4b51532933c281257c165a6');
  for(const p of Object.values(meta.internal_ota.profiles)){
   checkImage(fs.readFileSync(path.join(root,p.path)),p);
   console.log(`LOCAL ${p.version}: ${p.size} bytes SHA256 ${p.sha256}`);
  }
- checkImage(fs.readFileSync(path.join(root,'STANDALONE/BallgunSTANDALONE.bin')),sodium);
+ checkImage(fs.readFileSync(path.join(root,meta.shared_firmware.path)),meta.shared_firmware);
+ const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+ const usb=JSON.parse(html.match(/STANDALONE: (\[[^]*?\]),/)[1]);
+ assert.deepEqual(usb,meta.internal_usb.files.map(f=>({offset:f.offset,file:f.path,size:f.size,sha256:f.sha256})));
+ for(const f of meta.internal_usb.files){
+  const b=fs.readFileSync(path.join(root,f.path));assert.equal(b.length,f.size);assert.equal(hash(b),f.sha256);
+  if(f.offset===0x10000)checkImage(b,sodium);
+ }
  const prm=fs.readFileSync(path.join(root,'FTD30/waz_nodo2.prm'));
  assert.equal(hash(prm),'725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2','Canonical FTD30 set changed');
  assert.match(fs.readFileSync(path.join(root,'index.html'),'utf8'),new RegExp('flasher-'+meta.flasher.replaceAll('.','\\.')));
@@ -29,8 +38,9 @@ function checkImage(b,p){
   assert.deepEqual(JSON.parse((await get('version.json')).toString()),meta,'Live catalog must match local release');
   assert.equal(hash(await get('FTD30/waz_nodo2.prm')),hash(prm),'Live parameter set mismatch');
   for(const p of Object.values(meta.internal_ota.profiles))checkImage(await get(p.path),p);
-  checkImage(await get('STANDALONE/BallgunSTANDALONE.bin'),sodium);
+  checkImage(await get(meta.shared_firmware.path),meta.shared_firmware);
+  for(const f of meta.internal_usb.files){const b=await get(f.path);assert.equal(b.length,f.size);assert.equal(hash(b),f.sha256);}
   for(const p of ['index.html','fleet.html'])assert.equal(hash(await get(p)),hash(fs.readFileSync(path.join(root,p))),`${p} deployment mismatch`);
-  console.log(`LIVE VERIFIED: firmware ${meta.firmware}, Flasher ${meta.flasher}, Fleet ${meta.fleet}; both profiles and shared USB binary match.`);
+  console.log(`LIVE VERIFIED: firmware ${meta.firmware}, Flasher ${meta.flasher}, Fleet ${meta.fleet}; both OTA profiles and isolated USB files match; customer shared binary remains V12.1.10.`);
  }
 })().catch(e=>{console.error('RELEASE VERIFICATION FAILED:',e.message);process.exitCode=1;});

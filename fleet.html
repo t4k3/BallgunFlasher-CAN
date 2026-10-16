@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.6</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.8</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -208,7 +208,7 @@
       <button class="modebtn" data-mode="display">Display</button>
       <button class="modebtn" data-mode="both">Entrambi</button>
       <button class="modebtn" data-mode="parameters">Parametri (solo nodo 1)</button>
-      <button class="modebtn" data-mode="firmware_parameters">Firmware .5 + parametri</button>
+      <button class="modebtn" data-mode="firmware_parameters" disabled title="La 12.2 PDO non supporta la scrittura parametri">Firmware + parametri (non disponibile con PDO)</button>
     </div>
     <div class="bar">
       <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
@@ -264,7 +264,7 @@
 // =====================================================================
 // Config + costanti protocollo (devono combaciare col firmware)
 // =====================================================================
-const FIRMWARE_BIN_URL = 'https://t4k3.github.io/BallgunFlasher-CAN/STANDALONE/BallgunSTANDALONE.bin';
+// Firmware is loaded exclusively from the verified internal OTA catalog.
 const OTA_SERVICE_UUID = 'b69abf60-e699-beb7-624a-e625c0b1f625';
 const OTA_CHAR_UUID    = 'a7e5c5dc-918f-45b7-d64e-f90ee72691f9';
 const OTA_SECTOR_SIZE  = 4096;
@@ -395,9 +395,9 @@ async function downloadFirmware() {
   if (!metaResponse.ok) throw new Error(`Catalogo firmware HTTP ${metaResponse.status}`);
   const meta = await metaResponse.json();
   const profile = meta.internal_ota?.profiles?.sodium;
-  if (meta.firmware !== 'V12.1.10' || profile?.version !== 'V12.1.10' ||
-      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.1.10.bin')
-    throw new Error('Catalogo diverso dalla release V12.1.10: aggiornamento bloccato, ricarica la pagina.');
+  if (meta.firmware !== 'V12.2.28-PDO-FULL' || profile?.version !== 'V12.2.28-PDO-FULL' ||
+      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.2.28-PDO-FULL.bin')
+    throw new Error('Catalogo diverso dalla release V12.2.28-PDO-FULL: aggiornamento bloccato, ricarica la pagina.');
   const res = await fetch(`${base}${profile.path}?cb=${Date.now()}`, { cache:'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -1185,7 +1185,7 @@ async function loadFleetParameterSet() {
 
 // No automatic retry after partial writes; all parameter commands target node 1.
 async function fleetParametersOne(device, progress) {
-  const params = await loadFleetParameterSet();
+  const params = (await loadFleetParameterSet()).filter(p=>p.index!==994 && p.index!==1012);
   let chr, waiter = null;
   const notify = ev => {
     const v = new Uint8Array(ev.target.value.buffer, ev.target.value.byteOffset, ev.target.value.byteLength);
@@ -1223,6 +1223,7 @@ async function fleetParametersOne(device, progress) {
     await new Promise(r=>setTimeout(r,1200));
     const cap = await cmd([0xFC,1]);
     if (cap[2]===0xEE) throw new Error('MOTORI ACCESI');
+    if (cap.length===3 && cap[1]===1 && (cap[2]&0x80)) throw new Error('PDO: check in lettura disponibile, scrittura parametri non supportata. Nessun parametro scritto.');
     if (cap.length!==3 || cap[1]!==1 || (cap[2]&3)!==3) throw new Error('Serve V12.1.5: sblocco verificato e lettura SDO corretta. Nessun parametro scritto');
     log(`${device.name}: parametri solo nodo 1, set waz_nodo2.prm; nodo 2 intatto`);
     for (let i=0;i<params.length;i+=24) {
@@ -1231,7 +1232,7 @@ async function fleetParametersOne(device, progress) {
       const r=await cmd(pkt);
       if(r.length!==6 || r[1]!==2 || (r[2]|r[3]<<8)!==chunk.length || (r[4]|r[5]<<8)!==0)
         throw new Error(r[2]===0xE1?'Password 11 non confermata; SAVE non eseguito':'Batch incompleto/rifiutato; SAVE non eseguito');
-      progress(50*(i+chunk.length)/1024,'Scrittura nodo 1…');
+      progress(50*(i+chunk.length)/params.length,'Scrittura nodo 1…');
     }
     let mismatches=0;
     for(const p of params) {
@@ -1246,7 +1247,7 @@ async function fleetParametersOne(device, progress) {
     const save=await cmd([0xFC,3,1]);
     if(save.length!==3 || save[1]!==3 || save[2]!==0) throw new Error('SAVE non confermato');
     progress(100,'Nodo 1 salvato: riavvia FTD30 e verifica persistenza');
-    log(`${device.name}: verifica 1024/1024 e SAVE nodo 1 OK; nodo 2 intatto. Riavvio e verifica persistenza ancora necessari.`);
+    log(`${device.name}: verifica ${params.length}/${params.length} e SAVE nodo 1 OK; P994/P1012 preservati; nodo 2 intatto. Riavvio e verifica persistenza ancora necessari.`);
   } finally {
     if(chr)chr.removeEventListener('characteristicvaluechanged',notify);
     if(device.gatt.connected)device.gatt.disconnect();
@@ -1259,8 +1260,8 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters' && firmwareVersion !== 'V12.1.10') {
-    $('selMsg').textContent = 'Serve il pacchetto V12.1.10: ricarica la pagina prima di aggiornare.';
+  if (fleetMode === 'firmware_parameters') {
+    $('selMsg').textContent = 'La V12.2.28 PDO supporta il check in lettura, non la scrittura parametri. Seleziona Firmware.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
@@ -1375,7 +1376,7 @@ document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', (
   fleetMode = b.dataset.mode;
   document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
   $('updateAllBtn').textContent =
-    fleetMode === 'firmware_parameters' ? 'Aggiorna firmware .5 + parametri nodo 1 selezionati' :
+    fleetMode === 'firmware_parameters' ? 'Firmware + parametri non disponibile con PDO' :
     fleetMode === 'parameters' ? 'Aggiorna parametri nodo 1 selezionati' : fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
     fleetMode === 'display'  ? 'Aggiorna display selezionati'  : 'Aggiorna firmware + display selezionati';
   updateEmptyState();

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.31</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.33</title>
 <style>
     :root {
         color-scheme: dark;
@@ -75,6 +75,7 @@
     button:hover:not(:disabled) { transform:translateY(-1px); }
     button:focus-visible,.file-pick:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
     button:disabled { opacity:.38; cursor:not-allowed; box-shadow:none; }
+    [hidden] { display:none !important; }
     .btn-connect { border-color:var(--border); background:var(--surface-2); color:#dce1ec; }
     .btn-connect:hover:not(:disabled) { border-color:#46516d; background:var(--surface-3); }
     .btn-connect.connected { border-color:rgba(45,212,163,.4); background:rgba(45,212,163,.12); color:var(--ok); }
@@ -146,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.31</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.33</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -270,7 +271,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.1.10 · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.28-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -325,9 +326,13 @@
                 <span id="fparStatusText">Disconnected</span>
             </div>
             <button class="btn-connect" id="fparCheckBtn">Check completo · entrambi i nodi (sola lettura)</button>
-            <pre class="chip-info" id="fparReport" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+            <button class="btn-connect" id="fparBothBtn" hidden>Aggiorna parametri · entrambi i nodi</button>
+            <div id="fparVerifyPanel" hidden>
+                <label><input type="checkbox" id="fparRebootConfirmed"> Ho spento e riacceso ESP32 e driver, senza Start</label>
+                <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
+            </div>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Legge entrambi i driver e confronta i parametri con waz_nodo2.prm. Nessuna scrittura. Motori fermi; con PDO, riavvio completo con driver alimentati, senza Start.</div>
+            <div class="chip-info" id="fparInfo">Check in sola lettura, dettagli in console. Dopo un check completo con differenze puoi richiedere l’aggiornamento di entrambi i nodi. P994 e P1012 restano invariati. Motori fermi; con PDO, riavvio completo con driver alimentati, senza Start. Scrittura disponibile solo con firmware che supporta la manutenzione.</div>
         </div>
     </div>
 
@@ -338,8 +343,8 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.31 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
-        <span>Bin standard condiviso <code id="footerVersion">…</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.33 · OTA interno V12.2.28-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
         <span style="margin-left:auto;">
@@ -361,10 +366,30 @@ const FIRMWARE_BASE = 'https://t4k3.github.io/BallgunFlasher-CAN';
 // Flash layouts per device (offset + remote path)
 const FLASH_CONFIG = {
     STANDALONE: [
-        { offset: 0x0,     file: 'STANDALONE/bootloader.bin' },
-        { offset: 0x8000,  file: 'STANDALONE/partition-table.bin' },
-        { offset: 0xe000,  file: 'STANDALONE/ota_data_initial.bin' },
-        { offset: 0x10000, file: 'STANDALONE/BallgunSTANDALONE.bin' },
+        {
+            "offset": 0,
+            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/bootloader.bin",
+            "size": 22128,
+            "sha256": "4351902962d465f0469539d3948158ce037c441c2d97836054ca6719b232f633"
+        },
+        {
+            "offset": 32768,
+            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/partition-table.bin",
+            "size": 3072,
+            "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
+        },
+        {
+            "offset": 57344,
+            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/ota_data_initial.bin",
+            "size": 8192,
+            "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+        },
+        {
+            "offset": 65536,
+            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/BallgunSTANDALONE.bin",
+            "size": 913456,
+            "sha256": "836e2ff2a21f32b0980f5298600307da0f40fbeabee105a9e2e32c5f26d17468"
+        }
     ],
     PINSCAN: [
         { offset: 0x0,     file: 'PINSCAN/bootloader.bin' },
@@ -395,12 +420,11 @@ if (!('serial' in navigator)) {
 // Load STANDALONE version label from remote bin (best-effort)
 (async () => {
     try {
-        const r = await fetch(`${FIRMWARE_BASE}/STANDALONE/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.28-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
         if (!r.ok) return;
         const buf = new Uint8Array(await r.arrayBuffer());
-        const text = new TextDecoder('ascii', { fatal: false }).decode(buf);
-        const m = text.match(/V\d+\.\d+\.\d+/);
-        const ver = m ? m[0] : '(unknown)';
+        const ver = new TextDecoder().decode(buf.subarray(48,80)).split('\0')[0];
+        document.getElementById('footerVersion').textContent = ver;
         document.getElementById('standaloneVersion').textContent = ver;
     } catch (e) {
         document.getElementById('standaloneVersion').textContent = '(offline)';
@@ -471,6 +495,13 @@ async function flashFiles(key, config, panelTag, progressBar) {
         const res = await fetch(url);
         if (!res.ok) { log(`HTTP ${res.status} for ${f.file}`, panelTag); return false; }
         const buf = new Uint8Array(await res.arrayBuffer());
+        if (f.sha256) {
+            const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)), b => b.toString(16).padStart(2, '0')).join('');
+            if (buf.length !== f.size || hash !== f.sha256) {
+                log(`Integrità non valida: ${f.file}. Nessuna cancellazione o scrittura.`, panelTag);
+                return false;
+            }
+        }
         let bin = '';
         for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
         items.push({ data: bin, address: f.offset });
@@ -1550,17 +1581,17 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.1.10",
-        "path": "INTERNAL/OTA/naion-11s/V12.1.10.bin",
-        "size": 886864,
-        "sha256": "72af7bbc0dfb8631aa31073f47240455d5084cd7d4b51532933c281257c165a6"
+        "version": "V12.2.28-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.28-PDO-FULL.bin",
+        "size": 913456,
+        "sha256": "836e2ff2a21f32b0980f5298600307da0f40fbeabee105a9e2e32c5f26d17468"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
-        "version": "V12.1.10-LI10S",
-        "path": "INTERNAL/OTA/liion-10s/V12.1.10-LI10S.bin",
-        "size": 886880,
-        "sha256": "c63650fc5488b8fbb3240f7a765d67a2e8c3c94a7b2d137478654e9ffb4b277e"
+        "version": "V12.2.28-LI10S-PDO-FULL",
+        "path": "INTERNAL/OTA/liion-10s/V12.2.28-LI10S-PDO-FULL.bin",
+        "size": 913456,
+        "sha256": "c89c9c0adc85f2f8135061061d47d19b35bc0a8def25898ef60ea12fe4f63b7f"
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
@@ -1618,7 +1649,7 @@ function otaImageVersion(binData) {
         throw new Error('File non valido per ESP32-C6');
     const field = (start, end) => new TextDecoder().decode(bytes.subarray(start, end)).split('\0')[0];
     const version = field(48, 80);
-    if (field(80, 112) !== 'BallgunSTANDALONE' || !/^V\d+\.\d+\.\d+(?:-[A-Z0-9]+)?$/.test(version))
+    if (field(80, 112) !== 'BallgunSTANDALONE' || !/^V\d+\.\d+\.\d+(?:-[A-Z0-9]+)*$/.test(version))
         throw new Error('File o versione non compatibile con BallgunSTANDALONE');
     return version;
 }
@@ -2264,6 +2295,9 @@ async function fparConnect(){
 }
 
 async function fparRestoreNode(node, params, label, onSaved=null){
+    // Preserve board calibration and identity regardless of password permissions.
+    params = params.filter(p => p.index !== 994 && p.index !== 1012);
+    log(`${label}: P994 (DC Link Adj) e P1012 (Serial Number) esclusi dalla scrittura`, 'FTD30');
     if(!onSaved)fparInvalidateVerification('Nuova scrittura parametri: verifica precedente invalidata',true);
     log(`${label} (node ${node}): ${params.length} parametri…`, 'FTD30');
     let ok = 0, skip = 0;
@@ -2296,6 +2330,7 @@ async function fparRestoreNode(node, params, label, onSaved=null){
 }
 
 async function fparVerifyAll(node, params, label){
+    params = params.filter(p => p.index !== 994 && p.index !== 1012);
     let errors = 0;
     for (const p of params) {
         const r = await fparCmd([0xFC, 0x04, node, p.index & 255, p.index >> 8], 5000);
@@ -2527,13 +2562,18 @@ async function fparReadDiagnostic(){
 // during checks. Post-reboot verification NEVER unlocks, writes or saves.
 const FPAR_CANONICAL_SHA = '725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2';
 const FPAR_PENDING_KEY = 'wazlley.ftd30.pending.v1';
-function fparReport(text){ FQ('fparReport').textContent = text; log(text,'FTD30'); }
+function fparReport(text){ log(text,'FTD30'); }
 function fparPendingRecords(){
     const records=JSON.parse(localStorage.getItem(FPAR_PENDING_KEY)||'{}');
     if (!records || typeof records!=='object' || Array.isArray(records)) throw new Error('Archivio verifiche non valido');
     return records;
 }
 function fparPendingShow(){
+    const panel=FQ('fparVerifyPanel');
+    if(panel){
+        try{panel.hidden=!Object.values(fparPendingRecords()).some(r=>r.saved?.length===2 && !r.verifiedAt);}
+        catch{panel.hidden=true;}
+    }
     if(!FQ('fparPending'))return;
     try {
         const records=Object.values(fparPendingRecords());
@@ -2576,15 +2616,20 @@ function fparSame(value,expected){
     return !value.error && value.value===((expected & (value.size===4?0xFFFFFFFF:2**(8*value.size)-1))>>>0);
 }
 async function fparCompare(node,params){
-    const result={matched:0,differences:[],unread:[]};
+    const result={matched:0,differences:[],unread:[],preserved:[],total:params.filter(p=>p.index!==994&&p.index!==1012).length};
     for(const p of params){
         const got=await fparValue(node,p.index);
+        if(p.index===994 || p.index===1012){
+            result.preserved.push({index:p.index,...got});
+            log(`Nodo ${node} P${p.index}: ${got.error||got.value} · dato specifico scheda, preservato (non confrontato né scritto)`,'FTD30');
+            continue;
+        }
         if(got.error) result.unread.push(p.index);
         else if(fparSame(got,p.value)) result.matched++;
         else result.differences.push({index:p.index,expected:p.value,actual:got.value});
         if(p.index%64===0) fparProgress((node-1)*50+(p.index+1)/1024*50);
     }
-    log(`Nodo ${node}: ${result.matched}/1024 uguali; ${result.differences.length} diversi; ${result.unread.length} non letti`,'FTD30');
+    log(`Nodo ${node}: ${result.matched}/${result.total} uguali; ${result.differences.length} diversi; ${result.unread.length} non letti; ${result.preserved.length} campi preservati`,'FTD30');
     for(const d of result.differences) log(`Nodo ${node} P${d.index}: atteso ${d.expected}, letto ${d.actual}`,'FTD30');
     if(result.unread.length) log(`Nodo ${node}: non letti P${result.unread.join(', P')}`,'FTD30');
     return result;
@@ -2624,7 +2669,7 @@ function fparSummary(nodes,esp){
         rows.push(`FTD30: ${n.firmware.error||`${n.firmware.value>>>8}.${n.firmware.value&255} (raw 0x${n.firmware.value.toString(16)}; patch non esposta)`}`);
         rows.push(`RPM: ${text(n.rpm)} · Stato: ${n.status.error||'0x'+n.status.value.toString(16)} · Allarmi: ${text(n.alarm0)} / ${text(n.alarm1)}`);
         rows.push(`Tensione: ${n.voltage.error||((n.voltage.value/10).toFixed(1)+' V')}`);
-        if(n.compare) rows.push(`Parametri: ${n.compare.matched}/1024 uguali, ${n.compare.differences.length} diversi, ${n.compare.unread.length} non letti (dettagli in console)`);
+        if(n.compare) rows.push(`Parametri: ${n.compare.matched}/${n.compare.total} uguali, ${n.compare.differences.length} diversi, ${n.compare.unread.length} non letti; P994/P1012 preservati (dettagli in console)`);
     }
     if(nodes.every(n=>!n.firmware.error) && nodes[0].firmware.value!==nodes[1].firmware.value)
         rows.push('\nATTENZIONE: versioni FTD30 diverse fra i nodi. Il ripristino parametri NON aggiorna il firmware dei driver.');
@@ -2635,7 +2680,11 @@ async function fparCompleteCheck(){
     if(FPAR.busy)return;
     FPAR.busy=true;
     FQ('fparCheckBtn').disabled=true;
+    FQ('fparBothBtn').hidden=true;
+    FPAR.checkedDeviceId=null;
     try {
+        fparStatus(false,'Check in corso · dettagli in console');
+        fparProgress(0);
         fparReport('Check in corso: sola lettura, nessun unlock/write/SAVE.');
         if(!FPAR.char)await fparConnect();
         const set=await fparCanonical();
@@ -2645,30 +2694,38 @@ async function fparCompleteCheck(){
             if(fparSame(n.id,n.node)) n.compare=await fparCompare(n.node,fparPrep(set,n.node));
             fparReport(fparSummary(nodes,esp));
         }
-        const ok=nodes.every(n=>n.compare?.matched===1024) && fparSafeNodes(nodes);
+        const ok=nodes.every(n=>n.compare && n.compare.matched===n.compare.total) && fparSafeNodes(nodes);
+        const repairable=fparSafeNodes(nodes) && nodes.every(n=>n.compare && n.compare.unread.length===0)
+            && nodes.some(n=>n.compare.differences.length>0);
+        if(repairable){FPAR.checkedDeviceId=FPAR.device.id;FQ('fparBothBtn').hidden=false;}
         if(!ok)fparInvalidateVerification('Check con anomalie: verifica precedente non più confermata');
-        fparStatus(ok,ok?'Check parametri e stato OK · vedere limiti versione':'Check con anomalie o dati mancanti · vedere riepilogo');
+        fparStatus(ok,ok?'Check parametri e stato OK · dettagli in console':'Check con differenze o anomalie · dettagli in console');
     } catch(e){
         try{fparInvalidateVerification('Check interrotto: verifica precedente non più confermata');}catch{}
+        FPAR.checkedDeviceId=null;FQ('fparBothBtn').hidden=true;
         fparReport('Check NON completato: '+e.message); fparStatus(false,'Check non completato');
     }
     finally { FPAR.busy=false;FQ('fparCheckBtn').disabled=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
 }
 async function fparRestoreBoth(){
     if(FPAR.busy)return;
+    if(!FPAR.checkedDeviceId){fparReport('Esegui prima il Check completo: aggiornamento disponibile solo dopo un confronto completo con differenze.');return;}
     FPAR.busy=true; let record;
+    FQ('fparBothBtn').disabled=true;
     FQ('fparRebootConfirmed').checked=false;
     FQ('fparRebootConfirmed').disabled=true;
     try {
         if(!FPAR.char)await fparConnect();
+        if(FPAR.device.id!==FPAR.checkedDeviceId)throw new Error('Macchina diversa da quella controllata: ripetere il Check completo. Nessuna scrittura');
         const set=await fparCanonical();
         const cap=await fparCmd([0xFC,1],5000);
+        if(cap.length===3 && (cap[2]&0x80))throw new Error('Questa versione PDO permette solo il check: scrittura/SAVE non disponibili. Serve firmware con manutenzione PDO dedicata. Nessuna scrittura');
         if(cap.length!==3||cap[0]!==0xFC||cap[1]!==1||cap[2]===0xEE||(cap[2]&3)!==3)
             throw new Error('Firmware senza sblocco PW=11 verificato: nessuna scrittura');
         const nodes=await fparSnapshot();
         fparReport(fparSummary(nodes,await fparEspVersion()));
         if(!fparSafeNodes(nodes)) throw new Error('Servono ID 1 e 2 corretti, entrambi fermi/disabilitati e senza allarmi. Nessuna scrittura');
-        if(!confirm(`Ripristinare TUTTI i 1024 parametri di ENTRAMBI i driver di ${FPAR.device.name}?\nSet verificato waz_nodo2.prm: cambia SOLO P1 (1/2). Motori fermi.\nDopo SAVE dovrai spegnere e riaccendere tutto, senza Start, e verificare.`))return;
+        if(!confirm(`Ripristinare 1022 parametri di ENTRAMBI i driver di ${FPAR.device.name}?\nP994 (calibrazione) e P1012 (seriale) NON saranno scritti.\nSet verificato waz_nodo2.prm: cambia SOLO P1 (1/2). Motori fermi.\nDopo SAVE dovrai spegnere e riaccendere tutto, senza Start, e verificare.`))return;
         record={id:FPAR.device.id,name:FPAR.device.name,sha:FPAR_CANONICAL_SHA,saved:[],state:'ripristino in corso',at:Date.now()};
         fparPendingStore(record); // Storage must work BEFORE any write.
         for(const node of [1,2]){
@@ -2683,9 +2740,10 @@ async function fparRestoreBoth(){
         fparStatus(false,'Attesa verifica dopo riavvio');
     } catch(e){
         if(record){record.state='PARZIALE / NON CONFERMATO: '+e.message;try{fparPendingStore(record);}catch{}}
-        fparReport('Ripristino NON completato: '+e.message+'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.');
+        fparReport('Ripristino NON completato: '+e.message+(record?'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.':'\nNessuna scrittura avviata.'));
         fparStatus(false,'Ripristino non completato');
     } finally {
+        FPAR.checkedDeviceId=null;FQ('fparBothBtn').hidden=true;FQ('fparBothBtn').disabled=false;
         FQ('fparRebootConfirmed').checked=false;FQ('fparRebootConfirmed').disabled=false;
         FPAR.busy=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();
     }
@@ -2709,11 +2767,11 @@ async function fparVerifyReboot(){
         fparReport(`${record.name}: verifica dopo riavvio in corso, nessuna scrittura…`);
         for(const node of [1,2]){
             const result=await fparCompare(node,fparPrep(set,node));
-            if(result.matched!==1024)throw new Error(`Nodo ${node}: persistenza NON confermata (${result.matched}/1024 uguali)`);
+            if(result.matched!==result.total)throw new Error(`Nodo ${node}: persistenza NON confermata (${result.matched}/${result.total} uguali)`);
         }
-        record.state='VERIFICATO: 2048/2048 · riavvio dichiarato dall’operatore';
+        record.state='VERIFICATO: 2044/2044 · P994/P1012 preservati · riavvio dichiarato dall’operatore';
         record.verifiedAt=Date.now();fparPendingStore(record);
-        fparReport(`${record.name}: 1024/1024 parametri corretti su ciascun nodo.\nRiavvio confermato dall’operatore, non misurabile via BLE. Verifica solo parametri: collaudo motori ancora necessario.`);
+        fparReport(`${record.name}: 1022/1022 parametri corretti su ciascun nodo; P994/P1012 preservati.\nRiavvio confermato dall’operatore, non misurabile via BLE. Verifica solo parametri: collaudo motori ancora necessario.`);
         fparStatus(true,'Parametri verificati dopo riavvio dichiarato');
     } catch(e){
         if(record){record.state='verifica NON confermata: '+e.message;delete record.verifiedAt;try{fparPendingStore(record);}catch{}}
@@ -2722,6 +2780,9 @@ async function fparVerifyReboot(){
     finally{FPAR.busy=false;FQ('fparRebootConfirmed').checked=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();}
 }
 FQ('fparCheckBtn').addEventListener('click',fparCompleteCheck);
+FQ('fparBothBtn').addEventListener('click',fparRestoreBoth);
+FQ('fparRebootBtn').addEventListener('click',fparVerifyReboot);
+fparPendingShow();
 </script>
 
 </body>

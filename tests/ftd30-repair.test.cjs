@@ -47,10 +47,11 @@ assert.throws(() => ctx.fparParsePrm('[Drive]\n1,2,x'), /1024/);
     return [0xFC,4,0,v&255,(v>>>8)&255,(v>>>16)&255,v>>>24,4];
   };
   await ctx.fparRestoreAll();
-  assert.equal(calls.filter(p => p[1] === 4).length, 1024);
+  assert.equal(calls.filter(p => p[1] === 4).length, 1022);
+  for(const p of calls.filter(p=>p[1]===2))for(let o=4;o<p.length;o+=6)assert(![994,1012].includes(p[o]|p[o+1]<<8));
   assert.equal(calls.filter(p => p[1] === 3).length, 1);
   const saveAt = calls.findIndex(p => p[1] === 3);
-  assert.equal(calls.slice(0,saveAt).filter(p => p[1] === 4).length, 1024);
+  assert.equal(calls.slice(0,saveAt).filter(p => p[1] === 4).length, 1022);
 
   calls.length = 0;
   stored.set(78,0);
