@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.29</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.30</title>
 <style>
     :root {
         color-scheme: dark;
@@ -327,7 +327,14 @@
             <label class="file-pick" for="fparSetFile" id="fparSetLabel">📄 carica set .prm</label>
             <input type="file" id="fparSetFile" accept=".prm" style="display:none;" />
             <button class="btn-connect" id="fparDiagnosticBtn">Leggi diagnostica FTD30 (nessuna scrittura)</button>
+            <button class="btn-connect" id="fparCheckBtn">Check completo · entrambi i nodi (sola lettura)</button>
             <button class="btn-update ftd30-master" id="fparRestoreBtn" disabled>Correggi nodo 1 (nodo 2 intatto)</button>
+            <button class="btn-update ftd30-master" id="fparBothBtn">Ripristina ENTRAMBI · waz_nodo2.prm</button>
+            <div class="chip-info">Il ripristino di entrambi usa sempre il set remoto verificato, non il file personalizzato. Cambia solo P1: 1 per UP, 2 per DOWN. Nessun aggiornamento firmware.</div>
+            <label class="chip-info" style="display:block"><input type="checkbox" id="fparRebootConfirmed"> Ho spento e riacceso ESP32 e i due FTD30 dopo il SAVE, senza premere Start.</label>
+            <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio · entrambi i nodi</button>
+            <div class="chip-info" id="fparPending" role="status"></div>
+            <pre class="chip-info" id="fparReport" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
             <div class="chip-info" id="fparInfo">Set waz_nodo2.prm · solo P1 cambia a 1 · verifica completa prima di SAVE · richiede firmware con sblocco verificato (V12.1.5)</div>
         </div>
@@ -340,7 +347,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.29 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.30 · OTA interno V12.1.10 / V12.1.10-LI10S</code></span>
         <span>Bin standard condiviso <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2208,6 +2215,7 @@ function fparParsePrm(text){
 function fparOnNotify(ev){
     const value = ev.target.value;
     const v = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (FPAR.commandExpected != null && v[1] !== FPAR.commandExpected) return;
     const expected = FPAR.identityExpected;
     if (expected && (v[1] !== 5 || (v.length >= 14 &&
         (v[3] !== expected.node || v[4] !== (expected.index&255) || v[5] !== (expected.index>>8) ||
@@ -2221,16 +2229,40 @@ function fparWaitReply(ms){
     });
 }
 async function fparCmd(bytes, ms = 10000){
+    if (FPAR.waiter) throw new Error('Comando BLE già in corso');
+    FPAR.commandExpected = bytes[1];
     const p = fparWaitReply(ms);
-    await FPAR.char.writeValueWithResponse(Uint8Array.from(bytes));
-    return p;
+    // Attach the rejection handler immediately, including when the write fails.
+    p.catch(() => {});
+    let timer;
+    const deadline=new Promise((_,reject)=>{
+        FPAR.cancelCommand=()=>reject(new Error('BLE scollegato durante il comando'));
+        timer=setTimeout(()=>reject(new Error('timeout transazione BLE 0xFC')),ms);
+    });
+    try {
+        const transaction=Promise.all([FPAR.char.writeValueWithResponse(Uint8Array.from(bytes)),p]);
+        const [,reply]=await Promise.race([transaction,deadline]);
+        return reply;
+    } catch(e) {
+        if (FPAR.waiter) { const w=FPAR.waiter; FPAR.waiter=null; w(Uint8Array.from([0xFC,bytes[1],0xEF])); }
+        // No transaction ID on FC04: never reuse a timed-out connection.
+        if (FPAR.device?.gatt.connected) FPAR.device.gatt.disconnect();
+        FPAR.char=null;
+        throw e;
+    } finally { clearTimeout(timer);FPAR.cancelCommand=null;FPAR.commandExpected=null; }
 }
 
 async function fparConnect(){
     FPAR.device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'wazlley' }], optionalServices: [OTA_SERVICE_UUID],
+        filters: [{ namePrefix: 'wazlley' }], optionalServices: [OTA_SERVICE_UUID, 'device_information'],
     });
-    FPAR.device.addEventListener('gattserverdisconnected', () => { FPAR.char = null; fparStatus(false, 'Disconnected'); });
+    const device=FPAR.device;
+    FPAR.device.addEventListener('gattserverdisconnected', () => {
+        if (FPAR.device!==device) return;
+        FPAR.char = null; fparStatus(false, 'Disconnected');
+        if(FPAR.cancelCommand)FPAR.cancelCommand();
+        if (FPAR.waiter) { const w=FPAR.waiter; FPAR.waiter=null; w(Uint8Array.from([0xFC,FPAR.commandExpected,0xEF])); }
+    });
     FPAR.server = await FPAR.device.gatt.connect();
     const svc = await FPAR.server.getPrimaryService(OTA_SERVICE_UUID);
     FPAR.char = await svc.getCharacteristic(OTA_CHAR_UUID);
@@ -2240,7 +2272,8 @@ async function fparConnect(){
     await new Promise(r => setTimeout(r, 600));   // assestamento BLE
 }
 
-async function fparRestoreNode(node, params, label){
+async function fparRestoreNode(node, params, label, onSaved=null){
+    if(!onSaved)fparInvalidateVerification('Nuova scrittura parametri: verifica precedente invalidata',true);
     log(`${label} (node ${node}): ${params.length} parametri…`, 'FTD30');
     let ok = 0, skip = 0;
     for (let i = 0; i < params.length; i += FPAR_BATCH) {
@@ -2265,6 +2298,7 @@ async function fparRestoreNode(node, params, label){
     const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
     log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
     if (!saveOk) throw new Error('SAVE fallito: persistenza non confermata');
+    if(onSaved)onSaved(node); // Persist ACK immediately, even if subsequent readback fails.
     // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
     const verifyOk = await fparVerifyNode(node, params, label);
     return { ok, skip, saveOk, verifyOk };
@@ -2511,6 +2545,205 @@ async function fparReadDiagnostic(){
     }
 }
 FQ('fparDiagnosticBtn').addEventListener('click', fparReadDiagnostic);
+
+// COMPLETE CHECK / TWO-NODE RESTORE. Only FC01/04 and optional GATT reads
+// during checks. Post-reboot verification NEVER unlocks, writes or saves.
+const FPAR_CANONICAL_SHA = '725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2';
+const FPAR_PENDING_KEY = 'wazlley.ftd30.pending.v1';
+function fparReport(text){ FQ('fparReport').textContent = text; }
+function fparPendingRecords(){
+    const records=JSON.parse(localStorage.getItem(FPAR_PENDING_KEY)||'{}');
+    if (!records || typeof records!=='object' || Array.isArray(records)) throw new Error('Archivio verifiche non valido');
+    return records;
+}
+function fparPendingShow(){
+    try {
+        const records=Object.values(fparPendingRecords());
+        FQ('fparPending').textContent=records.length ? records.map(r=>
+            `${r.name}: ${r.state}; SAVE confermato sui nodi ${r.saved.join(', ')||'nessuno'}`).join('\n') :
+            'Nessun ripristino in attesa in questo browser. La verifica del riavvio richiede lo stesso browser.';
+    } catch(e) { FQ('fparPending').textContent='Archivio verifiche non accessibile: '+e.message; }
+}
+function fparPendingStore(record){
+    const all=fparPendingRecords(); all[record.id]=record;
+    localStorage.setItem(FPAR_PENDING_KEY,JSON.stringify(all));
+    fparPendingShow();
+}
+function fparInvalidateVerification(reason,clearSaved=false){
+    const record=fparPendingRecords()[FPAR.device?.id];
+    if(!record)return;
+    record.state=reason;delete record.verifiedAt;
+    if(clearSaved)record.saved=[];
+    fparPendingStore(record);
+}
+async function fparCanonical(){
+    const r=await fetch(`${FIRMWARE_BASE}/FTD30/waz_nodo2.prm?cb=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    if(!r.ok) throw new Error('Set waz_nodo2.prm non disponibile: nessuna scrittura');
+    const data=await r.arrayBuffer();
+    const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
+    if(sha!==FPAR_CANONICAL_SHA) throw new Error('Hash del set non corrispondente: ricaricare il portale, nessuna scrittura');
+    return fparParsePrm(new TextDecoder().decode(data));
+}
+async function fparValue(node,index){
+    const r=await fparCmd([0xFC,4,node,index&255,index>>8],5000);
+    if(r[2]===0xEE) throw new Error('Manutenzione rifiutata: motori/PDO attivi. Riavviare ESP e driver alimentati, senza Start');
+    if(r[2]===0xEF) throw new Error('BLE scollegato: verifica interrotta');
+    if(r.length!==8 || r[0]!==0xFC || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7]))
+        return {error:'Non letto: timeout CAN / SDO abort / risposta non valida (non prova un nodo assente)'};
+    return {value:(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0,size:r[7]};
+}
+function fparSame(value,expected){
+    return !value.error && value.value===((expected & (value.size===4?0xFFFFFFFF:2**(8*value.size)-1))>>>0);
+}
+async function fparCompare(node,params){
+    const result={matched:0,differences:[],unread:[]};
+    for(const p of params){
+        const got=await fparValue(node,p.index);
+        if(got.error) result.unread.push(p.index);
+        else if(fparSame(got,p.value)) result.matched++;
+        else result.differences.push({index:p.index,expected:p.value,actual:got.value});
+        if(p.index%64===0) fparProgress((node-1)*50+(p.index+1)/1024*50);
+    }
+    log(`Nodo ${node}: ${result.matched}/1024 uguali; ${result.differences.length} diversi; ${result.unread.length} non letti`,'FTD30');
+    for(const d of result.differences) log(`Nodo ${node} P${d.index}: atteso ${d.expected}, letto ${d.actual}`,'FTD30');
+    if(result.unread.length) log(`Nodo ${node}: non letti P${result.unread.join(', P')}`,'FTD30');
+    return result;
+}
+async function fparEspVersion(){
+    // Optional standard DIS; the current bridge does not expose an ESP version.
+    // Never substitute the OTA catalog, DB or capability bits for a live version.
+    try {
+        const svc=await FPAR.server.getPrimaryService('device_information');
+        const chr=await svc.getCharacteristic('firmware_revision_string');
+        const value=await chr.readValue();
+        const text=new TextDecoder().decode(value).replace(/\0/g,'').trim();
+        if(text && text.length<=80) return text+' (lettura BLE)';
+    } catch(e) { /* older firmware: explicitly unavailable */ }
+    return 'Non esposta via BLE: controllare sul Nextion/USB. Nessuna versione dedotta.';
+}
+async function fparSnapshot(){
+    const nodes=[];
+    for(const node of [1,2]){
+        const row={node};
+        for(const [name,index] of [['id',1],['firmware',0x123C],['rpm',0x1218],['voltage',0x1217],['status',0x4041],['alarm0',0x1204],['alarm1',0x1205]])
+            row[name]=await fparValue(node,index);
+        nodes.push(row);
+    }
+    return nodes;
+}
+function fparSafeNodes(nodes){
+    return nodes.length===2 && nodes.every(n=>fparSame(n.id,n.node) && !n.rpm.error && n.rpm.value===0 &&
+        !n.status.error && [0x21,0x23,0x40].includes(n.status.value&0x6F) &&
+        !n.alarm0.error && n.alarm0.value===0 && !n.alarm1.error && n.alarm1.value===0);
+}
+function fparSummary(nodes,esp){
+    const text=v=>v.error||String(v.value);
+    const rows=[`${FPAR.device.name} · ${new Date().toLocaleString()}`,`ESP32: ${esp}`];
+    for(const n of nodes){
+        rows.push(`\nNodo ${n.node} (${n.node===1?'UP':'DOWN'}): ${fparSame(n.id,n.node)?'risponde con ID corretto':'ID errato o lettura non confermata'}`);
+        rows.push(`FTD30: ${n.firmware.error||`${n.firmware.value>>>8}.${n.firmware.value&255} (raw 0x${n.firmware.value.toString(16)}; patch non esposta)`}`);
+        rows.push(`RPM: ${text(n.rpm)} · Stato: ${n.status.error||'0x'+n.status.value.toString(16)} · Allarmi: ${text(n.alarm0)} / ${text(n.alarm1)}`);
+        rows.push(`Tensione: ${n.voltage.error||((n.voltage.value/10).toFixed(1)+' V')}`);
+        if(n.compare) rows.push(`Parametri: ${n.compare.matched}/1024 uguali, ${n.compare.differences.length} diversi, ${n.compare.unread.length} non letti (dettagli in console)`);
+    }
+    if(nodes.every(n=>!n.firmware.error) && nodes[0].firmware.value!==nodes[1].firmware.value)
+        rows.push('\nATTENZIONE: versioni FTD30 diverse fra i nodi. Il ripristino parametri NON aggiorna il firmware dei driver.');
+    rows.push('\nRisposta agli ID 1 e 2 non esclude ulteriori schede con ID duplicato.');
+    return rows.join('\n');
+}
+async function fparCompleteCheck(){
+    if(FPAR.busy)return;
+    FPAR.busy=true;
+    try {
+        fparReport('Check in corso: sola lettura, nessun unlock/write/SAVE.');
+        if(!FPAR.char)await fparConnect();
+        const set=await fparCanonical();
+        const esp=await fparEspVersion(),nodes=await fparSnapshot();
+        fparReport(fparSummary(nodes,esp)+'\nConfronto completo in corso…');
+        for(const n of nodes){
+            if(fparSame(n.id,n.node)) n.compare=await fparCompare(n.node,fparPrep(set,n.node));
+            fparReport(fparSummary(nodes,esp));
+        }
+        const ok=nodes.every(n=>n.compare?.matched===1024) && fparSafeNodes(nodes);
+        if(!ok)fparInvalidateVerification('Check con anomalie: verifica precedente non più confermata');
+        fparStatus(ok,ok?'Check parametri e stato OK · vedere limiti versione':'Check con anomalie o dati mancanti · vedere riepilogo');
+    } catch(e){
+        try{fparInvalidateVerification('Check interrotto: verifica precedente non più confermata');}catch{}
+        fparReport('Check NON completato: '+e.message); fparStatus(false,'Check non completato');
+    }
+    finally { FPAR.busy=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
+}
+async function fparRestoreBoth(){
+    if(FPAR.busy)return;
+    FPAR.busy=true; let record;
+    FQ('fparRebootConfirmed').checked=false;
+    FQ('fparRebootConfirmed').disabled=true;
+    try {
+        if(!FPAR.char)await fparConnect();
+        const set=await fparCanonical();
+        const cap=await fparCmd([0xFC,1],5000);
+        if(cap.length!==3||cap[0]!==0xFC||cap[1]!==1||cap[2]===0xEE||(cap[2]&3)!==3)
+            throw new Error('Firmware senza sblocco PW=11 verificato: nessuna scrittura');
+        const nodes=await fparSnapshot();
+        fparReport(fparSummary(nodes,await fparEspVersion()));
+        if(!fparSafeNodes(nodes)) throw new Error('Servono ID 1 e 2 corretti, entrambi fermi/disabilitati e senza allarmi. Nessuna scrittura');
+        if(!confirm(`Ripristinare TUTTI i 1024 parametri di ENTRAMBI i driver di ${FPAR.device.name}?\nSet verificato waz_nodo2.prm: cambia SOLO P1 (1/2). Motori fermi.\nDopo SAVE dovrai spegnere e riaccendere tutto, senza Start, e verificare.`))return;
+        record={id:FPAR.device.id,name:FPAR.device.name,sha:FPAR_CANONICAL_SHA,saved:[],state:'ripristino in corso',at:Date.now()};
+        fparPendingStore(record); // Storage must work BEFORE any write.
+        for(const node of [1,2]){
+            fparReport(`${record.name}: ripristino nodo ${node} in corso. Non scollegare. Il lavoro non è ancora completo.`);
+            const result=await fparRestoreNode(node,fparPrep(set,node),`NODE ${node}`,savedNode=>{
+                record.saved.push(savedNode);fparPendingStore(record);
+            });
+            if(!result.saveOk||!result.verifyOk)throw new Error(`Nodo ${node}: SAVE/verifica non confermati`);
+        }
+        record.state='SAVE OK · attesa riavvio e verifica'; fparPendingStore(record);
+        fparReport('Entrambi i SAVE confermati. NON ancora verificata la persistenza.\nSpegni e riaccendi ESP32 e FTD30 (anche USB); non premere Start. Poi spunta la conferma e premi «Verifica dopo riavvio».');
+        fparStatus(false,'Attesa verifica dopo riavvio');
+    } catch(e){
+        if(record){record.state='PARZIALE / NON CONFERMATO: '+e.message;try{fparPendingStore(record);}catch{}}
+        fparReport('Ripristino NON completato: '+e.message+'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.');
+        fparStatus(false,'Ripristino non completato');
+    } finally {
+        FQ('fparRebootConfirmed').checked=false;FQ('fparRebootConfirmed').disabled=false;
+        FPAR.busy=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();
+    }
+}
+async function fparVerifyReboot(){
+    if(FPAR.busy)return;
+    if(!FQ('fparRebootConfirmed').checked){fparReport('Prima spegni e riaccendi ESP32 e FTD30, senza Start, poi conferma la casella.');return;}
+    FPAR.busy=true;
+    let record;
+    try {
+        // Always select a fresh connection and match the exact browser device ID.
+        if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();
+        FPAR.char=null; await fparConnect();
+        const selected=fparPendingRecords()[FPAR.device.id];
+        record=selected;
+        if(!record || record.sha!==FPAR_CANONICAL_SHA || record.saved.length!==2 || ![1,2].every(n=>record.saved.includes(n)))
+            throw new Error('Nessun ripristino completo in attesa per QUESTA macchina/browser. Usa Check completo o ripeti il ripristino');
+        record.state='verifica dopo riavvio in corso';delete record.verifiedAt;fparPendingStore(record);
+        const set=await fparCanonical(),nodes=await fparSnapshot();
+        if(!fparSafeNodes(nodes))throw new Error('Nodi non pronti, ID errati, allarmi o motori non fermi');
+        fparReport(`${record.name}: verifica dopo riavvio in corso, nessuna scrittura…`);
+        for(const node of [1,2]){
+            const result=await fparCompare(node,fparPrep(set,node));
+            if(result.matched!==1024)throw new Error(`Nodo ${node}: persistenza NON confermata (${result.matched}/1024 uguali)`);
+        }
+        record.state='VERIFICATO: 2048/2048 · riavvio dichiarato dall’operatore';
+        record.verifiedAt=Date.now();fparPendingStore(record);
+        fparReport(`${record.name}: 1024/1024 parametri corretti su ciascun nodo.\nRiavvio confermato dall’operatore, non misurabile via BLE. Verifica solo parametri: collaudo motori ancora necessario.`);
+        fparStatus(true,'Parametri verificati dopo riavvio dichiarato');
+    } catch(e){
+        if(record){record.state='verifica NON confermata: '+e.message;delete record.verifiedAt;try{fparPendingStore(record);}catch{}}
+        fparReport('Verifica dopo riavvio FALLITA: '+e.message);fparStatus(false,'Persistenza non confermata');
+    }
+    finally{FPAR.busy=false;FQ('fparRebootConfirmed').checked=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();}
+}
+FQ('fparCheckBtn').addEventListener('click',fparCompleteCheck);
+FQ('fparBothBtn').addEventListener('click',fparRestoreBoth);
+FQ('fparRebootBtn').addEventListener('click',fparVerifyReboot);
+fparPendingShow();
 
 // Pre-carica il set da remoto (repo), così non serve sceglierlo ogni volta.
 // Sovrascrivibile con un file .prm locale (il <label> è un file-pick).

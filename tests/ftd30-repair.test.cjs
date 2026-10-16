@@ -18,6 +18,7 @@ const ctx = {
   FPAR: {busy: false, char: {}, set: null}, FPAR_BATCH: 24,
   FQ: id => controls[id] || (controls[id] = {}),
   fparStatus(){}, fparProgress(){}, log(){},
+  fparInvalidateVerification(){},
   fparReadParam: async n => n,
   fparVerifyNode: async () => true,
 };

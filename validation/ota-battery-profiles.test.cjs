@@ -50,7 +50,7 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
 }
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
-    assert.equal(metadata.flasher, '1.5.29');
+    assert.equal(metadata.flasher, '1.5.30');
     assert.equal(metadata.firmware, 'V12.1.10');
     assert.equal(metadata.internal_ota.default, 'sodium');
     assert.equal(catalog.sodium.version, 'V12.1.10');

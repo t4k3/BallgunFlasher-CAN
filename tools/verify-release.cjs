@@ -19,12 +19,15 @@ function checkImage(b,p){
   console.log(`LOCAL ${p.version}: ${p.size} bytes SHA256 ${p.sha256}`);
  }
  checkImage(fs.readFileSync(path.join(root,'STANDALONE/BallgunSTANDALONE.bin')),sodium);
+ const prm=fs.readFileSync(path.join(root,'FTD30/waz_nodo2.prm'));
+ assert.equal(hash(prm),'725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2','Canonical FTD30 set changed');
  assert.match(fs.readFileSync(path.join(root,'index.html'),'utf8'),new RegExp('flasher-'+meta.flasher.replaceAll('.','\\.')));
  assert.match(fs.readFileSync(path.join(root,'fleet.html'),'utf8'),new RegExp('id="pageVer">v'+meta.fleet.replaceAll('.','\\.')));
  if(process.argv.includes('--live')){
   const base='https://t4k3.github.io/BallgunFlasher-CAN/';
   async function get(p){const r=await fetch(base+p+'?releaseCheck='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(30000)});assert(r.ok,`${p} HTTP ${r.status}`);return Buffer.from(await r.arrayBuffer());}
   assert.deepEqual(JSON.parse((await get('version.json')).toString()),meta,'Live catalog must match local release');
+  assert.equal(hash(await get('FTD30/waz_nodo2.prm')),hash(prm),'Live parameter set mismatch');
   for(const p of Object.values(meta.internal_ota.profiles))checkImage(await get(p.path),p);
   checkImage(await get('STANDALONE/BallgunSTANDALONE.bin'),sodium);
   for(const p of ['index.html','fleet.html'])assert.equal(hash(await get(p)),hash(fs.readFileSync(path.join(root,p))),`${p} deployment mismatch`);

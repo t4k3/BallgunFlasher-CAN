@@ -1,0 +1,45 @@
+Flasher 1.5.30 - full FTD30 check and two-node restoration
+
+Scope
+- Internal index.html only. Fleet and ESP firmware assets are unchanged.
+- Canonical FTD30/waz_nodo2.prm SHA256:
+  725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2
+- Both nodes receive all 1024 parameters. Only P1 is adapted to 1 or 2.
+- Existing node-1-only repair/custom-file action remains separate.
+
+Workflow
+1. Cold restart ESP and powered FTD30 drivers, motors stopped, do not Start.
+   PDO FULL ownership (including a fault after USB-only boot) blocks maintenance.
+2. Complete check: reads IDs, driver major/minor, RPM, voltage, status and alarms,
+   and compares all 1024 parameters per correctly identified node. No writes.
+3. Both-node restoration: canonical hash, checked-unlock capability and idle
+   state gates; explicit confirmation naming selected machine; full readback
+   BEFORE each SAVE. Each completed node is recorded immediately.
+4. Pending state is stored by Web Bluetooth device ID in this browser. Partial
+   writes/SAVE failures are not success. Do not Start after partial restoration.
+5. Power-cycle ESP and both drivers (including USB), without Start. Confirm the
+   checkbox and select the SAME machine for post-reboot verification.
+6. All 2048 parameters are read again using the hash-pinned canonical set.
+   This step sends no unlock, write or SAVE. Wrong device or incomplete saved
+   checkpoint fails closed. A failed recheck invalidates previous success.
+
+Limits
+- BLE disconnection is NOT proof of driver power cycling. Reboot is explicitly
+  operator-declared; current firmware exposes no boot counter for the drivers.
+- Browser device IDs/checkpoints do not transfer across laptops or browser
+  profiles. Full read-only check works independently on each laptop.
+- ESP version is read through optional standard Device Information Service
+  only when actually exposed. Current bridge firmware lacks that value: UI
+  says unavailable, directs to Nextion/USB, never substitutes OTA/DB version.
+- FTD30 0x323C exposes major/minor, not patch. Raw value is also shown.
+- FC04 failures do not distinguish CAN timeout from SDO abort: UI explicitly
+  reports ambiguity, not an asserted missing node. Both IDs responding cannot
+  rule out additional physical boards with duplicate IDs.
+- Parameter validation is not motor qualification or FTD30 firmware upgrade.
+
+Validation
+node --test tests/*.test.cjs validation/*.test.cjs
+node tools/verify-release.cjs
+node tools/verify-release.cjs --live (after publication)
+The BLE/storage tests are simulations of actual page functions, not physical
+proof on Casoria. No hardware writes or motor commands were sent in this task.
