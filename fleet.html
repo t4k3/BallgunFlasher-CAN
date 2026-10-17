@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.10</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.11</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -212,16 +212,18 @@
     </div>
     <div class="bar">
       <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
+      <button class="ghost" id="verifyVersionBtn" disabled>Verifica versione selezionate · senza flash</button>
       <button class="ghost" id="selectAllBtn">Seleziona tutte</button>
       <button class="ghost" id="deselectAllBtn">Deseleziona tutte</button>
       <button class="ghost" id="addBtn">+ Aggiungi sparapallone</button>
       <button class="ghost" id="refreshBtn">↻ Ricarica</button>
     </div>
     <div id="selMsg" class="device-msg" style="color:var(--warn);"></div>
+    <div class="device-msg">Già aggiornate? Seleziona le macchine e usa «Verifica versione». Solo lettura BLE, nessun flash. Macchine in Home, motori fermi e altre app BLE scollegate.</div>
   </div>
 
   <section id="currentSection" hidden>
-    <h2 class="sec">Aggiornamento in corso</h2>
+    <h2 class="sec">Operazione in corso</h2>
     <div class="panel current" id="currentList"></div>
   </section>
 
@@ -266,6 +268,7 @@
 // =====================================================================
 // Firmware is loaded exclusively from the verified internal OTA catalog.
 const OTA_SERVICE_UUID = 'b69abf60-e699-beb7-624a-e625c0b1f625';
+const FLEET_TARGET_VERSION = 'V12.2.34-PDO-FULL';
 const OTA_CHAR_UUID    = 'a7e5c5dc-918f-45b7-d64e-f90ee72691f9';
 const OTA_SECTOR_SIZE  = 4096;
 const OTA_PKT_PAYLOAD  = 180;
@@ -617,13 +620,14 @@ async function otaUpdateOne(device, onProgress) {
 
 // Read-only post-reboot proof. Reuse the SAME granted BluetoothDevice, never
 // select by name or use a roster/catalog version as evidence of installation.
-async function verifyFleetRunningVersion(device, expectedVersion, disconnectObserved) {
+async function verifyFleetRunningVersion(device, expectedVersion, disconnectObserved, purpose = 'post-update') {
   const unverified = reason => ({status:'transferred-unverified', runningVersion:null, reason});
-  if (!disconnectObserved) return unverified('Riavvio non osservato dopo il trasferimento');
+  if (purpose !== 'post-update' && purpose !== 'read-only') return unverified('Tipo di verifica non valido');
+  if (purpose === 'post-update' && !disconnectObserved) return unverified('Riavvio non osservato dopo il trasferimento');
   const identity = device.id;
   if (!identity) return unverified('Identità Bluetooth non disponibile');
   const deadline = nowMs() + 45000;
-  let lastError = 'Dispositivo non raggiungibile dopo il riavvio';
+  let lastError = 'Dispositivo non raggiungibile';
   for (let attempt=0; attempt<3 && nowMs()<deadline; attempt++) {
     await new Promise(resolve => setTimeout(resolve, attempt ? 2500 : 1500));
     let char=null, waiter=null, expired=false, disconnected=false;
@@ -912,9 +916,10 @@ async function nextionUpdateOne(device, onProgress) {
 // =====================================================================
 function setState(row, state, msg) {
   row.state = state;
-  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',verifying:'run',done:'ok',failed:'err',motors:'warn',unverified:'warn'}[state] || 'idle');
+  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',verifying:'run',done:'ok',failed:'err',motors:'warn',unverified:'warn',reading:'run','version-verified':'ok','version-mismatch':'warn','version-unread':'warn'}[state] || 'idle');
   const labels = { idle:'In attesa', connecting:'Connessione…', flashing:'Aggiornamento…',
-                   verifying:'Verifica dopo riavvio…', done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi', unverified:'⚠ Trasferito, non verificato' };
+                   verifying:'Verifica dopo riavvio…', done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi', unverified:'⚠ Trasferito, non verificato',
+                   reading:'Lettura versione…', 'version-verified':'✓ Versione verificata', 'version-mismatch':'⚠ Versione diversa', 'version-unread':'⚠ Versione non letta' };
   row.stateLabel.textContent = labels[state] || state;
   if (msg !== undefined) row.msg.textContent = msg;
   if (state === 'failed' || state === 'motors') {
@@ -1028,6 +1033,7 @@ function updateEmptyState() {
   $('queueCount').textContent = waitingCount;
   const needsFirmware = ['firmware', 'both', 'firmware_parameters'].includes(fleetMode);
   $('updateAllBtn').disabled = !hasRows || busy || (needsFirmware && !firmwareBytes);
+  $('verifyVersionBtn').disabled = !hasRows || busy;
   let empty = $('deviceList').querySelector('.empty');
   if (waitingCount === 0 && !empty) {
     empty = document.createElement('div');
@@ -1152,9 +1158,10 @@ function addSessionResult({ serial, success, motors, status, mode, duration_s, m
   for (const result of sessionResults) {
     const row = document.createElement('div'); row.className = 'result-row';
     const badge = document.createElement('span');
-    const unverified = result.status === 'transferred-unverified';
+    const unverified = ['transferred-unverified','version-mismatch','version-unread'].includes(result.status);
     badge.className = 'result-badge ' + (result.success ? 'ok' : result.motors || unverified ? 'warn' : 'err');
-    badge.textContent = unverified ? 'NON VERIFICATA' : result.success ? 'COMPLETATA' : result.motors ? 'MOTORI ACCESI' : 'ERRORE';
+    badge.textContent = ({'version-verified':'VERIFICATA','version-mismatch':'DIVERSA','version-unread':'NON LETTA'})[result.status] ||
+      (unverified ? 'NON VERIFICATA' : result.success ? 'COMPLETATA' : result.motors ? 'MOTORI ACCESI' : 'ERRORE');
     const main = document.createElement('span'); main.className = 'result-main';
     const name = document.createElement('span'); name.className = 'result-name'; name.textContent = result.serial;
     const meta = document.createElement('span'); meta.className = 'result-meta';
@@ -1375,6 +1382,51 @@ async function fleetParametersOne(device, progress) {
   }
 }
 
+// Independent read-only action: never calls OTA, parameter or display jobs.
+// A verification does not count as an update or emit an ota_completed event.
+async function verifyVersionSequence(targetRows) {
+  if (busy || !targetRows.length) return;
+  busy = true;
+  $('addBtn').disabled = true;
+  rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
+  updateEmptyState();
+  renderKnownDevices();
+  let verified = 0;
+  try {
+    for (const row of targetRows) {
+      const started = nowMs();
+      moveToCurrent(row);
+      row.prog.style.width = '0%';
+      setState(row, 'reading', `Lettura BLE; attesa ${FLEET_TARGET_VERSION}. Nessun flash.`);
+      let proof;
+      try {
+        proof = await verifyFleetRunningVersion(row.device, FLEET_TARGET_VERSION, false, 'read-only');
+      } catch (error) {
+        proof = {reason: error.message || String(error)};
+      }
+      const success = proof?.status === 'verified' && proof.runningVersion === FLEET_TARGET_VERSION && proof.deviceId === row.device.id;
+      const status = success ? 'version-verified' : proof?.runningVersion && proof.runningVersion !== FLEET_TARGET_VERSION ? 'version-mismatch' : 'version-unread';
+      const message = success ? `Installata e verificata: ${proof.runningVersion}. Nessun flash eseguito.` :
+        `Attesa ${FLEET_TARGET_VERSION}. ${proof?.reason || 'Impossibile confermare la versione sulla macchina selezionata'}. Nessun flash eseguito.`;
+      if (success) verified++;
+      setState(row, status, message);
+      row.prog.style.width = proof?.runningVersion ? '100%' : '0%';
+      log(`${row.device.name || row.device.id}: ${message}`);
+      addSessionResult({serial:row.device.name || row.device.id, success, status,
+        mode:'Verifica versione · sola lettura', duration_s:Math.round((nowMs()-started)/1000), message});
+      // Keep results visible, deselect them to avoid an accidental later update.
+      leaveCurrent(row, false);
+    }
+    $('selMsg').textContent = `${verified}/${targetRows.length} versioni confermate ${FLEET_TARGET_VERSION}. Nessun flash eseguito.`;
+  } finally {
+    busy = false;
+    $('addBtn').disabled = false;
+    rows.forEach(r => { r.retryBtn.disabled = false; r.reselectBtn.disabled = false; });
+    renderFleetViews();
+    updateEmptyState();
+  }
+}
+
 async function updateSequence(targetRows) {
   const needParams = fleetMode === 'parameters' || fleetMode === 'firmware_parameters';
   const needFw  = ['firmware', 'both', 'firmware_parameters'].includes(fleetMode);
@@ -1391,6 +1443,7 @@ async function updateSequence(targetRows) {
   }
   busy = true;
   $('updateAllBtn').disabled = true;
+  $('verifyVersionBtn').disabled = true;
   $('addBtn').disabled = true;
   rows.forEach(r => { r.retryBtn.disabled = true; r.reselectBtn.disabled = true; });
   renderKnownDevices();
@@ -1523,6 +1576,17 @@ $('updateAllBtn').addEventListener('click', () => {
   }
   $('selMsg').textContent = '';
   updateSequence(selected);
+});
+
+$('verifyVersionBtn').addEventListener('click', () => {
+  if (busy) return;
+  const selected = [...rows.values()].filter(r => r.chk.checked);
+  if (!selected.length) {
+    $('selMsg').textContent = 'Seleziona le macchine da verificare; se necessario aggiungile dai dispositivi autorizzati in passato o con «+ Aggiungi sparapallone».';
+    return;
+  }
+  $('selMsg').textContent = '';
+  verifyVersionSequence(selected);
 });
 
 // =====================================================================

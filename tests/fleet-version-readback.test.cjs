@@ -5,7 +5,7 @@ const source=html.match(/^async function verifyFleetRunningVersion\([^]*?^}/m)[0
 const target='V12.2.34-PDO-FULL';
 const turn=()=>new Promise(r=>setImmediate(r));
 
-async function run(scenario){
+async function run(scenario, purpose = 'post-update'){
  let now=0,id=0,attempts=0,tokenCounter=123,done=false,result,error;
  const timers=new Map(),deviceListeners=new Set(),chars=[],writes=[];
  const ctx={Uint8Array,Uint16Array,Promise,Error,String,Math,
@@ -65,7 +65,7 @@ async function run(scenario){
      }};
    }}};
  vm.createContext(ctx);vm.runInContext(source,ctx);
- ctx.verifyFleetRunningVersion(device,target,scenario!=='noReboot').then(r=>{result=r;done=true;},e=>{error=e;done=true;});
+ ctx.verifyFleetRunningVersion(device,target,purpose==='post-update' && scenario!=='noReboot',purpose).then(r=>{result=r;done=true;},e=>{error=e;done=true;});
  for(let i=0;!done || timers.size;i++){
    assert(i<150,'unbounded verification');await turn();
    if(timers.size){const [key,t]=[...timers].sort((a,b)=>a[1].at-b[1].at)[0];timers.delete(key);now=t.at;t.fn();}
@@ -90,3 +90,17 @@ for(const scenario of ['noReboot','mismatch','lithium','nack','wrongToken','wron
    if(scenario==='noReboot')assert.equal(r.attempts,0);
    if(scenario.endsWith('Timeout')||scenario==='lateConnect')assert.equal(r.attempts,1,'hung operation must not start overlapping retries');
  });
+
+test('standalone read verifies current firmware without an OTA or reboot',async()=>{
+ const r=await run('success','read-only');
+ assert.equal(r.result.status,'verified');assert.equal(r.result.runningVersion,target);
+ assert.equal(r.writes.length,2);assert.equal(r.attempts,1);
+});
+for(const scenario of ['mismatch','lithium','silent','nack','connectTimeout','disconnect'])
+ test(`standalone read fails closed: ${scenario}`,async()=>{
+  const r=await run(scenario,'read-only');assert.equal(r.result.status,'transferred-unverified');
+  if(scenario==='mismatch')assert.equal(r.result.runningVersion,'V12.2.33-PDO-FULL');
+ });
+test('unknown verification purpose never connects',async()=>{
+ const r=await run('success','invalid');assert.equal(r.attempts,0);assert.equal(r.result.status,'transferred-unverified');
+});
