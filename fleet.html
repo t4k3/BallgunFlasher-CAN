@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.9</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.10</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -603,7 +603,7 @@ async function otaUpdateOne(device, onProgress) {
     // Questo non verifica la versione effettivamente avviata.
     const disconnectObserved = await waitForReboot(8000);
     // Né il timeout né una disconnessione provano il firmware in esecuzione.
-    // Il bridge corrente non espone una lettura della versione dopo il reboot.
+    // runDeviceJob effettua una lettura AA13 separata dopo questo cleanup.
     return { status: 'transferred-unverified', runningVersion: null, disconnectObserved };
   } finally {
     cancelWait?.();
@@ -613,6 +613,99 @@ async function otaUpdateOne(device, onProgress) {
     // riavvio o installazione (il listener è già rimosso).
     try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
   }
+}
+
+// Read-only post-reboot proof. Reuse the SAME granted BluetoothDevice, never
+// select by name or use a roster/catalog version as evidence of installation.
+async function verifyFleetRunningVersion(device, expectedVersion, disconnectObserved) {
+  const unverified = reason => ({status:'transferred-unverified', runningVersion:null, reason});
+  if (!disconnectObserved) return unverified('Riavvio non osservato dopo il trasferimento');
+  const identity = device.id;
+  if (!identity) return unverified('Identità Bluetooth non disponibile');
+  const deadline = nowMs() + 45000;
+  let lastError = 'Dispositivo non raggiungibile dopo il riavvio';
+  for (let attempt=0; attempt<3 && nowMs()<deadline; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, attempt ? 2500 : 1500));
+    let char=null, waiter=null, expired=false, disconnected=false;
+    let onNotify=null, cancelReply=null;
+    const onDisconnect=()=>{disconnected=true;cancelReply?.(new Error('Disconnessione durante la verifica'));};
+    // A hung GATT operation ends verification, not another connection attempt
+    // racing that operation. Late connect completion is retired and disconnected.
+    const bounded = async operation => {
+      const remaining=Math.min(8000, deadline-nowMs());
+      if (remaining<=0) throw Object.assign(new Error('Tempo di verifica esaurito'),{verificationTimeout:true});
+      let timer;
+      const work=Promise.resolve().then(operation);
+      try {
+        return await Promise.race([work,new Promise((_,reject)=>{
+          timer=setTimeout(()=>{expired=true;reject(Object.assign(new Error('Timeout verifica BLE'),{verificationTimeout:true}));},remaining);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    device.addEventListener('gattserverdisconnected',onDisconnect);
+    try {
+      if (device.id!==identity) throw new Error('Identità Bluetooth cambiata');
+      const server=await bounded(async()=>{
+        const connected=await device.gatt.connect();
+        if(expired){connected.disconnect();throw new Error('Connessione tardiva scartata');}
+        return connected;
+      });
+      const service=await bounded(()=>server.getPrimaryService(OTA_SERVICE_UUID));
+      char=await bounded(()=>service.getCharacteristic(OTA_CHAR_UUID));
+      onNotify=event=>{
+        if(expired || disconnected || !waiter || event.target!==char)return;
+        const view=event.target.value;
+        const bytes=new Uint8Array(view.buffer,view.byteOffset,view.byteLength);
+        waiter(bytes);
+      };
+      char.addEventListener('characteristicvaluechanged',onNotify);
+      await bounded(()=>char.startNotifications());
+      const token=crypto.getRandomValues(new Uint16Array(1))[0];
+      const version=[];
+      let total=null;
+      while(total===null || version.length<total){
+        if(disconnected || !device.gatt.connected || device.id!==identity)throw new Error('Sessione BLE non più valida');
+        const offset=version.length;
+        let replyTimer;
+        const reply=new Promise((resolve,reject)=>{
+          const finish=(error,value)=>{clearTimeout(replyTimer);waiter=null;cancelReply=null;error?reject(error):resolve(value);};
+          cancelReply=error=>finish(error);
+          waiter=bytes=>{
+            if(bytes[0]!==0xAA || bytes[1]!==0x13)return;
+            if(bytes.length===3){finish(new Error('Lettura versione non supportata'));return;}
+            if(bytes.length<5 || bytes[3]!==(token>>8) || bytes[4]!== (token&255))return;
+            if(bytes.length<8 || bytes[2]!==1 || bytes[5]<1 || bytes[5]>64 ||
+               bytes[6]!==offset || (total!==null && bytes[5]!==total) ||
+               bytes.length!==7+Math.min(13,bytes[5]-offset) ||
+               bytes.slice(7).some(b=>b<33 || b>126)){
+              finish(new Error('Risposta versione non valida'));return;
+            }
+            finish(null,bytes.slice());
+          };
+          replyTimer=setTimeout(()=>finish(new Error('Nessuna risposta alla lettura versione')),3000);
+        });
+        reply.catch(()=>{});
+        await bounded(()=>char.writeValueWithResponse(Uint8Array.of(0xAA,0x13,token>>8,token&255,offset)));
+        const bytes=await reply;
+        total=bytes[5];version.push(...bytes.slice(7));
+      }
+      if(disconnected || !device.gatt.connected || device.id!==identity)throw new Error('Sessione BLE interrotta');
+      if(nowMs()>=deadline)return unverified('Tempo di verifica esaurito');
+      const runningVersion=String.fromCharCode(...version);
+      if(runningVersion!==expectedVersion)return {...unverified(`Versione avviata ${runningVersion}; attesa ${expectedVersion}`),runningVersion};
+      return {status:'verified',runningVersion,deviceId:identity};
+    } catch(error) {
+      lastError=error.message || String(error);
+      if(error.verificationTimeout) return unverified(lastError);
+    } finally {
+      expired=true;
+      cancelReply?.(new Error('Verifica terminata'));
+      device.removeEventListener('gattserverdisconnected',onDisconnect);
+      try { if(char && onNotify)char.removeEventListener('characteristicvaluechanged',onNotify); }catch(e){}
+      try { if(device.gatt.connected)device.gatt.disconnect(); }catch(e){}
+    }
+  }
+  return unverified(lastError);
 }
 
 // =====================================================================
@@ -819,9 +912,9 @@ async function nextionUpdateOne(device, onProgress) {
 // =====================================================================
 function setState(row, state, msg) {
   row.state = state;
-  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn',unverified:'warn'}[state] || 'idle');
+  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',verifying:'run',done:'ok',failed:'err',motors:'warn',unverified:'warn'}[state] || 'idle');
   const labels = { idle:'In attesa', connecting:'Connessione…', flashing:'Aggiornamento…',
-                   done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi', unverified:'⚠ Trasferito, non verificato' };
+                   verifying:'Verifica dopo riavvio…', done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi', unverified:'⚠ Trasferito, non verificato' };
   row.stateLabel.textContent = labels[state] || state;
   if (msg !== undefined) row.msg.textContent = msg;
   if (state === 'failed' || state === 'motors') {
@@ -1127,16 +1220,21 @@ async function runDeviceJob(row, kind) {
     const t0 = nowMs();
     try {
       if (isFw) {
-        const result = await otaUpdateOne(row.device, pct => { setState(row, 'flashing'); row.prog.style.width = pct.toFixed(1) + '%'; });
+        let result = await otaUpdateOne(row.device, pct => { setState(row, 'flashing'); row.prog.style.width = pct.toFixed(1) + '%'; });
+        if(result?.status === 'transferred-unverified'){
+          setState(row,'verifying','Trasferimento confermato; riconnessione e lettura versione ESP32…');
+          // After successful transfer, NO error in verification may retry OTA.
+          try { result=await verifyFleetRunningVersion(row.device,firmwareVersion,result.disconnectObserved); }
+          catch(error){result={status:'transferred-unverified',reason:error.message || String(error)};}
+        }
         if (result?.status === 'transferred-unverified') {
-          const message = 'Trasferimento confermato; versione avviata non verificata. Controllare sul dispositivo prima di proseguire.';
+          const message = `Trasferimento confermato; ${result.reason || 'versione avviata non verificata'}. Nessun nuovo flash automatico.`;
           setState(row, 'unverified', message);
           log(`⚠ ${serial}: ${message}`);
           // Do not send ota_completed: the backend may treat it as installed.
           return { success: false, motors: false, lastErr: '', status: result.status, message };
         }
-        // Reserved for a future real post-reboot readback, not an ACK, catalog
-        // version, DB record or local disconnect. Current bridge cannot verify.
+        // Only exact readback from the reconnected device confirms installation.
         if (result?.status !== 'verified' || result.runningVersion !== firmwareVersion)
           throw new Error('Nessuna verifica della versione avviata');
       } else {

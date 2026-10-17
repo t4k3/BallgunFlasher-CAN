@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(__dirname, '../fleet.html'), 'utf8');
 const extract = name => html.match(new RegExp('^(?:async )?function ' + name + '\\([^]*?^}', 'm'))[0];
 const target = 'V12.2.34-PDO-FULL';
 
-async function run(result, kind = 'firmware') {
+async function run(result, kind = 'firmware', verification = result) {
   let calls = 0;
   const events = [], logs = [];
   const row = { device:{name:'test'}, prog:{style:{}}, dot:{}, stateLabel:{}, msg:{}, retryBtn:{}, reselectBtn:{} };
@@ -19,6 +19,7 @@ async function run(result, kind = 'firmware') {
     logEvent:(...args)=>events.push(args), log:message=>logs.push(message),
     setTimeout:fn=>fn(),
     otaUpdateOne:async()=>{calls++;if(result instanceof Error) throw result;return result;},
+    verifyFleetRunningVersion:async()=>{if(verification instanceof Error)throw verification;return verification;},
     nextionUpdateOne:async()=>{calls++;},
   };
   vm.createContext(ctx);
@@ -58,12 +59,23 @@ function render(status, success, motors = false) {
     assert.deepEqual(r.events.map(e=>e[1]),['ota_started','ota_failed']);
   }
   // Only an explicit verified-running contract with matching readback can
-  // reach this branch. The production OTA function currently never emits it.
+  // reach this branch; ACK/disconnect alone remain insufficient.
   const verified = await run({status:'verified',runningVersion:target});
   assert.equal(verified.outcome.success,true);
   assert.equal(verified.roster.current_firmware,target);
   assert.equal(verified.roster.marker,'preserve');
   assert.deepEqual(verified.events.map(e=>e[1]),['ota_started','ota_completed']);
+  const postReboot=await run({status:'transferred-unverified',disconnectObserved:true},'firmware',
+    {status:'verified',runningVersion:target,deviceId:'same'});
+  assert.equal(postReboot.calls,1);assert.equal(postReboot.outcome.success,true);
+  assert.equal(postReboot.roster.current_firmware,target);
+  assert.deepEqual(postReboot.events.map(e=>e[1]),['ota_started','ota_completed']);
+  for(const verification of [Error('readback failed'),{status:'transferred-unverified',reason:'old version'}]){
+    const r=await run({status:'transferred-unverified',disconnectObserved:true},'firmware',verification);
+    assert.equal(r.calls,1,'verification failure must never repeat transfer');
+    assert.equal(r.outcome.status,'transferred-unverified');assert.equal(r.roster,r.original);
+    assert.deepEqual(r.events.map(e=>e[1]),['ota_started']);
+  }
   const display = await run(undefined,'nextion');
   assert.equal(display.outcome.success,true);
   assert.equal(display.roster,display.original);
