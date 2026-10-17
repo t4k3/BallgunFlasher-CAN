@@ -12,7 +12,7 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.2.28-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.2.34-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
  assert.equal(meta.shared_firmware.version,'V12.1.10');
  assert.equal(meta.shared_firmware.sha256,'72af7bbc0dfb8631aa31073f47240455d5084cd7d4b51532933c281257c165a6');

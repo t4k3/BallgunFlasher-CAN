@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.8</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.9</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -395,9 +395,9 @@ async function downloadFirmware() {
   if (!metaResponse.ok) throw new Error(`Catalogo firmware HTTP ${metaResponse.status}`);
   const meta = await metaResponse.json();
   const profile = meta.internal_ota?.profiles?.sodium;
-  if (meta.firmware !== 'V12.2.28-PDO-FULL' || profile?.version !== 'V12.2.28-PDO-FULL' ||
-      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.2.28-PDO-FULL.bin')
-    throw new Error('Catalogo diverso dalla release V12.2.28-PDO-FULL: aggiornamento bloccato, ricarica la pagina.');
+  if (meta.firmware !== 'V12.2.34-PDO-FULL' || profile?.version !== 'V12.2.34-PDO-FULL' ||
+      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.2.34-PDO-FULL.bin')
+    throw new Error('Catalogo diverso dalla release V12.2.34-PDO-FULL: aggiornamento bloccato, ricarica la pagina.');
   const res = await fetch(`${base}${profile.path}?cb=${Date.now()}`, { cache:'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -477,15 +477,17 @@ function otaBuildSectorPackets(sectorIndex, data) {
 async function otaUpdateOne(device, onProgress) {
   const fw = firmwareBytes;
   if (!fw.length) throw new Error('firmware vuoto');
-  let char = null, waiter = null;
+  let char = null, waiter = null, cancelWait = null;
   const onNotify = ev => {
     const v = new Uint8Array(ev.target.value.buffer);
     if (v.length === 12 && v[0] === 0xFE && v[1] === 0x10) return; // PROGRESS, informativo
     if (waiter) { const w = waiter; waiter = null; w(v); }
   };
   const waitNotify = ms => new Promise((resolve, reject) => {
-    const t = setTimeout(() => { if (waiter) { waiter = null; reject(new Error('timeout')); } }, ms);
-    waiter = v => { clearTimeout(t); resolve(v); };
+    const clear = () => { clearTimeout(t); waiter = null; cancelWait = null; };
+    const t = setTimeout(() => { clear(); reject(new Error('timeout')); }, ms);
+    cancelWait = () => { clear(); reject(new Error('OTA annullato')); };
+    waiter = v => { clear(); resolve(v); };
   });
   const write = async (bytes, withResp) => {
     const buf = Uint8Array.from(bytes);
@@ -499,29 +501,35 @@ async function otaUpdateOne(device, onProgress) {
   let gotDisconnect = false, discResolve = null;
   const onDisconnect = () => { gotDisconnect = true; if (discResolve) { const f = discResolve; discResolve = null; f(); } };
   const waitForReboot = ms => new Promise(res => {
-    if (gotDisconnect) return res();
-    const t = setTimeout(() => { discResolve = null; res(); }, ms);
-    discResolve = () => { clearTimeout(t); res(); };
+    if (gotDisconnect) return res(true);
+    const t = setTimeout(() => { discResolve = null; res(false); }, ms);
+    discResolve = () => { clearTimeout(t); res(true); };
   });
   device.addEventListener('gattserverdisconnected', onDisconnect);
 
+  try {
   // --- sveglia l'handle "freddo" di getDevices ---
   // Un device ricordato (getDevices) fallisce gatt.connect() con "Bluetooth
   // Device is no longer in range" finché Chrome non riceve una pubblicità
   // fresca. watchAdvertisements() la aspetta e "risveglia" l'handle. Se non è
   // supportato (o la pubblicità non arriva) si prova comunque a connettere.
   if (!device.gatt.connected && typeof device.watchAdvertisements === 'function') {
+    const ac = new AbortController();
+    let advertisementTimer = null, onAdv = null;
     try {
-      const ac = new AbortController();
       const seen = new Promise(res => {
-        const onAdv = () => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(true); };
+        onAdv = () => res(true);
         device.addEventListener('advertisementreceived', onAdv);
-        setTimeout(() => { try { device.removeEventListener('advertisementreceived', onAdv); } catch(e){} res(false); }, 6000);
+        advertisementTimer = setTimeout(() => res(false), 6000);
       });
       await device.watchAdvertisements({ signal: ac.signal });
       await seen;
-      try { ac.abort(); } catch(e){}
     } catch (e) { /* non supportato → connetti comunque */ }
+    finally {
+      clearTimeout(advertisementTimer);
+      try { if (onAdv) device.removeEventListener('advertisementreceived', onAdv); } catch(e){}
+      try { ac.abort(); } catch(e){}
+    }
   }
 
   // --- connessione ---
@@ -533,7 +541,6 @@ async function otaUpdateOne(device, onProgress) {
   // assestamento (Android: notifiche/PHY) prima del primo comando
   await new Promise(r => setTimeout(r, IS_ANDROID ? 1200 : 300));
 
-  try {
     // --- 1) ENTER OTA con retry (la prima notifica su Android può perdersi) ---
     let r = null;
     for (let a=1; a<=ENTER_RETRIES; a++) {
@@ -594,13 +601,16 @@ async function otaUpdateOne(device, onProgress) {
 
     // --- 4) ACK finale valido ricevuto: lascia tempo al riavvio autonomo.
     // Questo non verifica la versione effettivamente avviata.
-    await waitForReboot(8000);
+    const disconnectObserved = await waitForReboot(8000);
+    // Né il timeout né una disconnessione provano il firmware in esecuzione.
+    // Il bridge corrente non espone una lettura della versione dopo il reboot.
+    return { status: 'transferred-unverified', runningVersion: null, disconnectObserved };
   } finally {
+    cancelWait?.();
     try { device.removeEventListener('gattserverdisconnected', onDisconnect); } catch(e){}
     try { char && char.removeEventListener('characteristicvaluechanged', onNotify); } catch(e){}
-    // Disconnetti solo se ancora connesso (percorso d'errore: il device NON si
-    // è riavviato). Su successo è già caduto da solo dopo il reboot, quindi qui
-    // non tocchiamo nulla e non innescriamo l'abort dell'OTA.
+    // Cleanup locale anche su timeout: questa disconnessione NON è prova di
+    // riavvio o installazione (il listener è già rimosso).
     try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch(e){}
   }
 }
@@ -809,9 +819,9 @@ async function nextionUpdateOne(device, onProgress) {
 // =====================================================================
 function setState(row, state, msg) {
   row.state = state;
-  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn'}[state] || 'idle');
+  row.dot.className = 'dot ' + ({connecting:'run',flashing:'run',done:'ok',failed:'err',motors:'warn',unverified:'warn'}[state] || 'idle');
   const labels = { idle:'In attesa', connecting:'Connessione…', flashing:'Aggiornamento…',
-                   done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi' };
+                   done:'✓ Aggiornato', failed:'✗ Errore', motors:'⚠ Motori accesi', unverified:'⚠ Trasferito, non verificato' };
   row.stateLabel.textContent = labels[state] || state;
   if (msg !== undefined) row.msg.textContent = msg;
   if (state === 'failed' || state === 'motors') {
@@ -1040,17 +1050,18 @@ function bumpSessionDone() {
   sessionDone++;
   $('sessionDone').textContent = ` · ✓ ${sessionDone} aggiornate in questa sessione`;
 }
-function addSessionResult({ serial, success, motors, mode, duration_s, message }) {
+function addSessionResult({ serial, success, motors, status, mode, duration_s, message }) {
   sessionResults.unshift({
-    serial, success, motors, mode, duration_s, message,
+    serial, success, motors, status, mode, duration_s, message,
     at: new Date().toLocaleTimeString(),
   });
   const list = $('sessionHistoryList'); list.innerHTML = '';
   for (const result of sessionResults) {
     const row = document.createElement('div'); row.className = 'result-row';
     const badge = document.createElement('span');
-    badge.className = 'result-badge ' + (result.success ? 'ok' : result.motors ? 'warn' : 'err');
-    badge.textContent = result.success ? 'COMPLETATA' : result.motors ? 'MOTORI ACCESI' : 'ERRORE';
+    const unverified = result.status === 'transferred-unverified';
+    badge.className = 'result-badge ' + (result.success ? 'ok' : result.motors || unverified ? 'warn' : 'err');
+    badge.textContent = unverified ? 'NON VERIFICATA' : result.success ? 'COMPLETATA' : result.motors ? 'MOTORI ACCESI' : 'ERRORE';
     const main = document.createElement('span'); main.className = 'result-main';
     const name = document.createElement('span'); name.className = 'result-name'; name.textContent = result.serial;
     const meta = document.createElement('span'); meta.className = 'result-meta';
@@ -1100,7 +1111,8 @@ $('refreshBtn').addEventListener('click', refreshDevices);
 // Update sequenziale
 // =====================================================================
 // Esegue UN job ('firmware' o 'nextion') su una macchina, coi retry/pausa
-// collaudati. Ritorna { success, motors, lastErr }.
+// collaudati. Firmware: success richiede una versione avviata verificata;
+// transferred-unverified termina senza ritentare o aggiornare il registro.
 async function runDeviceJob(row, kind) {
   const serial = row.device.name;
   const isFw = (kind === 'firmware');
@@ -1115,13 +1127,24 @@ async function runDeviceJob(row, kind) {
     const t0 = nowMs();
     try {
       if (isFw) {
-        await otaUpdateOne(row.device, pct => { setState(row, 'flashing'); row.prog.style.width = pct.toFixed(1) + '%'; });
+        const result = await otaUpdateOne(row.device, pct => { setState(row, 'flashing'); row.prog.style.width = pct.toFixed(1) + '%'; });
+        if (result?.status === 'transferred-unverified') {
+          const message = 'Trasferimento confermato; versione avviata non verificata. Controllare sul dispositivo prima di proseguire.';
+          setState(row, 'unverified', message);
+          log(`⚠ ${serial}: ${message}`);
+          // Do not send ota_completed: the backend may treat it as installed.
+          return { success: false, motors: false, lastErr: '', status: result.status, message };
+        }
+        // Reserved for a future real post-reboot readback, not an ACK, catalog
+        // version, DB record or local disconnect. Current bridge cannot verify.
+        if (result?.status !== 'verified' || result.runningVersion !== firmwareVersion)
+          throw new Error('Nessuna verifica della versione avviata');
       } else {
         await nextionUpdateOne(row.device, (pct, note) => { setState(row, 'flashing', note || 'display…'); row.prog.style.width = pct.toFixed(1) + '%'; });
       }
       const dur = Math.round((nowMs() - t0) / 1000);
       row.prog.style.width = '100%';
-      setState(row, 'done', isFw ? `Riavvio su ${firmwareVersion}…` : 'Display aggiornato');
+      setState(row, 'done', isFw ? `Versione avviata verificata: ${firmwareVersion}` : 'Display aggiornato');
       log(`✅ ${serial}: ${isFw ? 'firmware' : 'display'} completato in ${dur}s${attempt > 1 ? ` (tentativo ${attempt})` : ''}`);
       if (isFw) dbRoster.set(serial, { ...(dbRoster.get(serial) || { serial }), current_firmware: firmwareVersion });
       logEvent(serial, isFw ? 'ota_completed' : 'nextion_completed', isFw ? { from_version: fromVer, to_version: firmwareVersion, duration_s: dur } : { duration_s: dur });
@@ -1139,7 +1162,7 @@ async function runDeviceJob(row, kind) {
     }
   }
   if (!success && !motors) logEvent(serial, isFw ? 'ota_failed' : 'nextion_failed', { error: lastErr });
-  return { success, motors, lastErr };
+  return { success, motors, lastErr, status: success ? 'verified' : 'failed' };
 }
 
 let fleetParameterSet = null;
@@ -1261,7 +1284,7 @@ async function updateSequence(targetRows) {
   if (busy) return;
   if (needFw && !firmwareBytes) return;
   if (fleetMode === 'firmware_parameters') {
-    $('selMsg').textContent = 'La V12.2.28 PDO supporta il check in lettura, non la scrittura parametri. Seleziona Firmware.';
+    $('selMsg').textContent = 'La V12.2.34 PDO supporta il check in lettura, non la scrittura parametri. Seleziona Firmware.';
     return;
   }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
@@ -1293,7 +1316,7 @@ async function updateSequence(targetRows) {
     }
   }
 
-  let okCount = 0, failCount = 0;
+  let okCount = 0, failCount = 0, unverifiedCount = 0;
   for (const row of targetRows) {
     const sequenceStarted = nowMs();
     moveToCurrent(row);
@@ -1317,7 +1340,17 @@ async function updateSequence(targetRows) {
       res = await runDeviceJob(row, 'nextion');
     }
 
-    if (res.success) {
+    if (res.status === 'transferred-unverified') {
+      unverifiedCount++;
+      addSessionResult({
+        serial: row.device.name || row.device.id,
+        success: false, motors: false, status: res.status,
+        mode: `Firmware ${firmwareVersion}`,
+        duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
+        message: res.message,
+      });
+      leaveCurrent(row, false);
+    } else if (res.success) {
       okCount++;
       bumpSessionDone();
       addSessionResult({
@@ -1354,7 +1387,7 @@ async function updateSequence(targetRows) {
   });
   renderFleetViews();   // aggiorna riepilogo, dispositivi conosciuti e storico firmware
   updateEmptyState();
-  log(`=== Fine: ${okCount} ok, ${failCount} falliti ===`);
+  log(`=== Fine: ${okCount} ok, ${unverifiedCount} trasferiti non verificati, ${failCount} falliti ===`);
 }
 
 // Seleziona/forza tutte le macchine in raggio (anche quelle che il DB segna

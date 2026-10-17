@@ -14,34 +14,38 @@ async function run(page, scenario) {
     assert(m, `${page}: ${name}`); return m[0];
   };
   const fleet = page === 'fleet.html';
-  let clock = 0, timerId = 0, done = false, failure;
+  let clock = 0, timerId = 0, done = false, failure, result, timersAtFinish;
+  let cleanupDisconnects = 0, remoteDisconnects = 0;
+  let finalAckAt, cleanupAt, finishedAt;
+  let watchSignal;
   const timers = new Map(), listeners = new Map(), deviceListeners = new Map();
   const logs = [], progress = [], sectors = [], counts = new Map();
   const button = {};
   const firmware = new Uint8Array(4097).fill(0xa5);
   const ctx = {
-    Uint8Array, Date, console,
+    Uint8Array, Date, console, AbortController,
     OTA_PKT_PAYLOAD:180, OTA_SECTOR_SIZE:4096, OTA_MAX_RETRIES:5, OTA_ACK_TIMEOUT:3000,
     ENTER_RETRIES:3, ENTER_TIMEOUT:7000, OTA_SERVICE_UUID:'service', OTA_CHAR_UUID:'char', IS_ANDROID:false,
     firmwareBytes:firmware,
     document:{getElementById:()=>button},
-    log:message=>logs.push(message), otaSetProgress:p=>progress.push(p),
+    log:message=>logs.push(message), otaSetProgress:p=>progress.push(p), otaSetStatus:()=>{},
     setTimeout(fn, ms) { const id=++timerId;timers.set(id,{fn,at:clock+ms});return id; },
     clearTimeout(id) { timers.delete(id); }
   };
   const notify = bytes => {
     const data = Uint8Array.from(bytes);
     const event = {target:{value:new DataView(data.buffer)}};
-    if (fleet) listeners.get('characteristicvaluechanged')?.(event);
-    else ctx.otaOnNotify(event);
+    listeners.get('characteristicvaluechanged')?.(event);
   };
   const ack = (sector, status=0) => {
     const p=Uint8Array.from([sector&255,sector>>8,status,0,0,0]);
     const crc=ctx.otaCrc16(p.slice(0,4));p[4]=crc>>8;p[5]=crc;return p;
   };
   const disconnect = () => {
-    device.gatt.connected=false;deviceListeners.get('gattserverdisconnected')?.();
+    device.gatt.connected=false;
+    for(const listener of [...(deviceListeners.get('gattserverdisconnected') || [])]) listener();
   };
+  const remoteDisconnect = () => { remoteDisconnects++; disconnect(); };
   const write = async (bytes, response) => {
     if (response) {
       if (bytes.length===2) {
@@ -65,7 +69,7 @@ async function run(page, scenario) {
       if(scenario==='writeFailAck') {notify(ack(sector));throw Error('final write failed after notification');}
       if(scenario==='writeFail') throw Error('final write failed');
       if(scenario==='timeout') return;
-      if(scenario==='disconnect') {disconnect();return;}
+      if(scenario==='disconnect') {remoteDisconnect();return;}
       if(scenario==='resyncBackward' && counts.get(1)===1) {notify(ack(0,2));return;}
       if(scenario==='nack' || (scenario==='retryThenSuccess' && counts.get(1)===1)) {notify(ack(sector,1));return;}
       if(scenario==='crcWrong') {const p=ack(sector);p[5]^=1;notify(p);return;}
@@ -73,27 +77,70 @@ async function run(page, scenario) {
       if(scenario==='shortAck') {notify(ack(sector).slice(0,4));return;}
       if(scenario==='longAck') {notify([...ack(sector),0]);return;}
     }
+    if(sector===1) finalAckAt=clock;
     notify(ack(sector));
+    if(sector===1 && scenario==='disconnectWithAck') remoteDisconnect();
+    if(sector===1 && scenario==='disconnectAfterAck') ctx.setTimeout(remoteDisconnect, 10);
+    if(sector===1 && scenario==='delayedReboot') ctx.setTimeout(remoteDisconnect, 7999);
   };
   const characteristic = {
-    startNotifications:async()=>{},
+    startNotifications:async()=>{if(scenario==='notificationFail') throw Error('notifications failed');},
     addEventListener:(name,fn)=>listeners.set(name,fn),
     removeEventListener:name=>listeners.delete(name),
     writeValueWithResponse:bytes=>write(bytes,true),
     writeValueWithoutResponse:bytes=>write(bytes,false)
   };
   const device = {
-    addEventListener:(name,fn)=>deviceListeners.set(name,fn),
-    removeEventListener:name=>deviceListeners.delete(name),
-    gatt:{connected:true, disconnect,
-      connect:async()=>({getPrimaryService:async()=>({getCharacteristic:async()=>characteristic})})}
+    name:'wazlley_AB12',
+    addEventListener:(name,fn)=>{
+      if(!deviceListeners.has(name)) deviceListeners.set(name,new Set());
+      deviceListeners.get(name).add(fn);
+    },
+    removeEventListener:(name,fn)=>{
+      const group=deviceListeners.get(name);group?.delete(fn);
+      if(group?.size===0) deviceListeners.delete(name);
+    },
+    gatt:{connected:!scenario.startsWith('advert'), disconnect:()=>{cleanupDisconnects++;cleanupAt=clock;disconnect();},
+      connect:async()=>{
+        if(scenario==='connectFail' || scenario.startsWith('advert')) throw Error('connect failed');
+        device.gatt.connected=true;
+        return {getPrimaryService:async()=>{
+          if(scenario==='serviceFail') throw Error('service failed');
+          return {getCharacteristic:async()=>characteristic};
+        }};
+      }}
   };
-  ctx.ota={char:characteristic,waiter:null};
+  if(scenario.startsWith('advert')) device.watchAdvertisements = async ({signal}) => {
+    watchSignal=signal;
+    if(scenario==='advertReject') throw Error('watch unsupported');
+    if(scenario==='advertEarly') ctx.setTimeout(()=>{
+      for(const listener of deviceListeners.get('advertisementreceived') || []) listener();
+    },1);
+  };
+  ctx.navigator={userAgent:'host test',bluetooth:{requestDevice:async()=>device}};
+  ctx.ota={char:null,device:null,server:null,waiter:null,cancelWait:null,disconnectListener:null};
   vm.createContext(ctx);
-  const names=['otaCrc16','otaBuildSectorPackets',...(fleet?['otaUpdateOne']:['otaOnNotify','otaWaitNotify','otaWrite','otaRunUpdate'])];
+  const names=['otaCrc16','otaBuildSectorPackets',...(fleet?['otaUpdateOne']:
+    ['otaOnNotify','otaWaitNotify','otaWrite','otaReleaseConnection','otaWaitForReboot','otaConnect','otaRunUpdate'])];
   vm.runInContext(names.map(extract).join('\n'),ctx);
-  const job=fleet?ctx.otaUpdateOne(device,p=>progress.push(p)):ctx.otaRunUpdate(firmware);
-  job.then(()=>{done=true;},e=>{failure=e;done=true;});
+  const assertReleased = () => {
+    assert.equal(device.gatt.connected,false,`${page}: GATT still connected`);
+    assert.equal(listeners.size,0,`${page}: stale notification listener`);
+    assert.equal(deviceListeners.size,0,`${page}: stale device listener`);
+    if(!fleet) for(const key of ['device','server','char','waiter','cancelWait','disconnectListener'])
+      assert.equal(ctx.ota[key],null,`single OTA retained ${key}`);
+  };
+  const single = async () => {
+    if(!await ctx.otaConnect()) throw Error('connect failed');
+    const result=await ctx.otaRunUpdate(firmware);
+    assertReleased();
+    return result;
+  };
+  const job=fleet?ctx.otaUpdateOne(device,p=>progress.push(p)):(async()=>{
+    if(scenario==='repeatSuccess') await single();
+    return single();
+  })();
+  job.then(r=>{result=r;done=true;finishedAt=clock;timersAtFinish=timers.size;},e=>{failure=e;done=true;timersAtFinish=timers.size;});
   // Drain microtasks, then advance to the next production timeout/pacing event.
   // Drain remaining timers after write errors too: their rejection must be handled.
   for(let ticks=0;!done || timers.size;ticks++) {
@@ -105,10 +152,28 @@ async function run(page, scenario) {
     } else assert(done,'unresolved task without timer');
   }
   await immediate();await immediate();
-  const success=fleet?!failure:logs.some(s=>s.includes('OTA COMPLETE'));
-  if(!success && !fleet) assert(logs.some(s=>s.includes('OTA FAILED')),'missing failure report');
-  if(!fleet) assert.equal(button.disabled,false);
-  return {success,sectors,progress,failure,logs};
+  const success=!failure && result?.status==='transferred-unverified';
+  if(!success && !fleet && !['connectFail','serviceFail','notificationFail'].includes(scenario))
+    assert(logs.some(s=>s.includes('OTA FAILED')),'missing failure report');
+  if(!fleet && button.disabled!==undefined) assert.equal(button.disabled,false);
+  assertReleased();
+  assert.equal(timersAtFinish,0,`${page}: timer survived completion/cleanup`);
+  if(failure) {
+    assert.equal(device.gatt.connected,false,`${page}: failed transfer left GATT connected`);
+    assert.equal(listeners.size,0,`${page}: stale notification listener`);
+    assert.equal(timersAtFinish,0,`${page}: timer survived failure`);
+    if(!fleet) {
+      if(!['connectFail','serviceFail','notificationFail'].includes(scenario)) assert.equal(failure.status,'failed');
+      assert.equal(ctx.ota.waiter,null);
+      assert.equal(ctx.ota.char,null);
+      assert.equal(ctx.ota.server,null);
+    }
+  }
+  if(fleet) assert.equal(deviceListeners.size,0,'stale disconnect listener');
+  if(watchSignal) assert.equal(watchSignal.aborted,true,'advertisement watch not aborted');
+  assert(!logs.some(s=>s.includes('OTA COMPLETE')),'transfer presented as installed');
+  if(success) assert(!logs.some(s=>s.includes('OTA FAILED')),'cleanup falsely reported transfer failure');
+  return {success,sectors,progress,failure,logs,result,cleanupDisconnects,remoteDisconnects,finalAckAt,cleanupAt,finishedAt};
 }
 
 (async()=>{
@@ -118,19 +183,44 @@ async function run(page, scenario) {
       'shortAck','longAck','resyncLoop','resyncSame','resyncOutOfRange','enterWriteFail','startWriteFail']) {
       const r=await run(page,scenario);
       assert.equal(r.success,false,`${page}: ${scenario} falsely succeeded`);
+      assert(r.failure,`${page}: ${scenario} swallowed failure`);
       assert(!r.progress.includes(100),`${page}: ${scenario} reported 100%`);
       if(['timeout','nack','crcWrong','indexWrong','shortAck','longAck'].includes(scenario))
         assert.equal(r.sectors.filter(s=>s===1).length,5,`${page}: bounded final retry`);
       cases++;
     }
     for(const [scenario,expected] of [['success',[0,1]],['retryThenSuccess',[0,1,1]],
-      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]]]) {
+      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]],['disconnectAfterAck',[0,1]]]) {
       const r=await run(page,scenario);
       assert(r.success,`${page}: ${scenario} failed`);
       assert.deepEqual(r.sectors,expected,`${page}: wrong resync target/increment`);
       assert.equal(r.progress.at(-1),100);cases++;
+      assert.equal(r.result.runningVersion,null);
+      assert.equal(r.result.status,'transferred-unverified');
+      assert.equal(r.result.disconnectObserved,scenario==='disconnectAfterAck');
+      assert.equal(r.cleanupDisconnects,scenario==='disconnectAfterAck'?0:1);
+      assert.equal(r.finishedAt-r.finalAckAt,scenario==='disconnectAfterAck'?10:8000,
+        'preserve reboot grace, bounded at 8 seconds');
+    }
+    if(page==='fleet.html') {
+      for(const scenario of ['connectFail','serviceFail','notificationFail','advertReject','advertEarly','advertTimeout']) {
+        const r=await run(page,scenario);
+        assert(r.failure,`${scenario}: swallowed failure`);cases++;
+      }
+    } else {
+      for(const scenario of ['connectFail','serviceFail','notificationFail']) {
+        const r=await run(page,scenario);assert(r.failure);cases++;
+      }
+      for(const scenario of ['disconnectWithAck','delayedReboot','repeatSuccess']) {
+        const r=await run(page,scenario);assert(r.success);cases++;
+        assert.equal(r.result.disconnectObserved,scenario!=='repeatSuccess');
+        assert.equal(r.finishedAt-r.finalAckAt,
+          scenario==='disconnectWithAck'?0:scenario==='delayedReboot'?7999:8000);
+        assert.equal(r.cleanupDisconnects,scenario==='repeatSuccess'?2:0);
+        assert.deepEqual(r.sectors,scenario==='repeatSuccess'?[0,1,0,1]:[0,1]);
+      }
     }
   }
   assert.equal(unhandled.length,0,`unhandled rejection: ${unhandled}`);
-  console.log(`PASS ${cases} actual web OTA completion scenarios: strict ACK, failures, bounded resync and pending-promise cleanup`);
+  console.log(`PASS ${cases} actual web OTA completion scenarios: strict ACK, propagated failures, GATT/listener/timer cleanup, bounded resync, transfer != verified running version`);
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>process.removeListener('unhandledRejection',onUnhandled));

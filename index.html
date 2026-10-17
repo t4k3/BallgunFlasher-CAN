@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.33</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.34</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.33</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.34</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -271,7 +271,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.28-PDO-FULL · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.34-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -343,7 +343,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.33 · OTA interno V12.2.28-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.34 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -368,27 +368,27 @@ const FLASH_CONFIG = {
     STANDALONE: [
         {
             "offset": 0,
-            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/bootloader.bin",
+            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/bootloader.bin",
             "size": 22128,
-            "sha256": "4351902962d465f0469539d3948158ce037c441c2d97836054ca6719b232f633"
+            "sha256": "a7293464c96cd5e71ec2cb0e6dfa7181e4102202844a7a582d51e18d5aa73b18"
         },
         {
             "offset": 32768,
-            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/partition-table.bin",
+            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/partition-table.bin",
             "size": 3072,
             "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
         },
         {
             "offset": 57344,
-            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/ota_data_initial.bin",
+            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/ota_data_initial.bin",
             "size": 8192,
             "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
         },
         {
             "offset": 65536,
-            "file": "INTERNAL/USB/V12.2.28-PDO-FULL/BallgunSTANDALONE.bin",
-            "size": 913456,
-            "sha256": "836e2ff2a21f32b0980f5298600307da0f40fbeabee105a9e2e32c5f26d17468"
+            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/BallgunSTANDALONE.bin",
+            "size": 918944,
+            "sha256": "4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4"
         }
     ],
     PINSCAN: [
@@ -420,7 +420,7 @@ if (!('serial' in navigator)) {
 // Load STANDALONE version label from remote bin (best-effort)
 (async () => {
     try {
-        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.28-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.34-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
         if (!r.ok) return;
         const buf = new Uint8Array(await r.arrayBuffer());
         const ver = new TextDecoder().decode(buf.subarray(48,80)).split('\0')[0];
@@ -865,6 +865,48 @@ document.getElementById('nextionUpdateBtn').addEventListener('click', async () =
     await nextionUpdate(tftData);
 });
 
+async function nextionReadUploadFrame(timeoutMs = 10000) {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+        if (nextionRxBuffer.length) {
+            const code = nextionRxBuffer[0];
+            if (code === 0x05) {
+                nextionRxBuffer = nextionRxBuffer.slice(1);
+                return { code };
+            }
+            if (code !== 0x08) throw new Error(`Nextion upload error: 0x${code.toString(16)}`);
+            if (nextionRxBuffer.length >= 5) {
+                const offset = new DataView(nextionRxBuffer.buffer, nextionRxBuffer.byteOffset, 5).getUint32(1, true);
+                nextionRxBuffer = nextionRxBuffer.slice(5);
+                return { code, offset };
+            }
+        }
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error('Nextion upload ACK timeout (transfer not confirmed)');
+}
+
+async function nextionTransferTft(data, write, readFrame, report) {
+    if (!data.length) throw new Error('Empty Nextion image');
+    const chunkSize = 4096, maxChunks = Math.ceil(data.length / chunkSize) * 4 + 16;
+    let position = 0, chunks = 0;
+    while (true) {
+        if (++chunks > maxChunks) throw new Error('Nextion repeated seeks: transfer aborted');
+        const end = Math.min(position + chunkSize, data.length);
+        await write(data.slice(position, end));
+        position = end;
+        // Include the LAST block. Never erase a response that arrived during write().
+        const frame = await readFrame();
+        if (frame.code === 0x08) {
+            if (!Number.isInteger(frame.offset) || frame.offset < 0 || frame.offset > data.length)
+                throw new Error('Nextion seek outside image');
+            if (frame.offset > 0) position = frame.offset; // zero means continue forward
+        } else if (frame.code !== 0x05) throw new Error('Unexpected Nextion upload response');
+        report(position, chunks, frame);
+        if (position === data.length) return { chunks };
+    }
+}
+
 async function nextionUpdate(tftData) {
     const updateBtn = document.getElementById('nextionUpdateBtn');
     updateBtn.disabled = true;
@@ -968,19 +1010,16 @@ async function nextionUpdate(tftData) {
         const uploadCmd = `whmi-wris ${fileSize},${detectedBaud},${uploadFlag}`;
         log(`upload flag: ${uploadFlag} (fwVersion=${detectedFwVersion}, threshold<250 → use ,0 for old bootloaders)`, 'NEXTION');
         log(`upload cmd: ${uploadCmd}`, 'NEXTION');
+        nextionRxBuffer = new Uint8Array(0);
         await nextionSendCmd(uploadCmd);
-
-        nextionRxBuffer = new Uint8Array(0);
-        await nextionReadUntilByte(0x05, 15000);
+        const initialAck = await nextionReadUploadFrame(15000);
+        if (initialAck.code !== 0x05) throw new Error('Unexpected initial Nextion ACK');
         log('Nextion ACK — streaming', 'NEXTION');
-        nextionRxBuffer = new Uint8Array(0);
         nextionSetProgress(20);
 
         // Step 4: stream .tft in 4KB chunks, handle 0x05 (next) and 0x08 (skip offset)
         const fileData = tftData.data;
         const chunkSize = 4096;
-        let filePos = 0;
-        let chunksSent = 0;
         const uploadStart = Date.now();
 
         // Per-frame trace counters for diagnostics
@@ -988,61 +1027,14 @@ async function nextionUpdate(tftData) {
         let frame08Count = 0;
         const frame08History = [];
 
-        // First chunk immediately after initial ACK
-        {
-            const end = Math.min(filePos + chunkSize, fileData.length);
-            await nextionWriter.write(fileData.slice(filePos, end));
-            filePos = end; chunksSent++;
-        }
-
-        while (filePos < fileSize) {
-            nextionRxBuffer = new Uint8Array(0);
-            const respStart = Date.now();
-            let responded = false;
-            while (Date.now() - respStart < 10000) {
-                if (nextionRxBuffer.length >= 1) {
-                    if (nextionRxBuffer[0] === 0x05) {
-                        nextionRxBuffer = new Uint8Array(0);
-                        frame05Count++;
-                        const end = Math.min(filePos + chunkSize, fileData.length);
-                        await nextionWriter.write(fileData.slice(filePos, end));
-                        filePos = end; chunksSent++; responded = true; break;
-                    } else if (nextionRxBuffer[0] === 0x08 && nextionRxBuffer.length >= 5) {
-                        const off = (nextionRxBuffer[1] | (nextionRxBuffer[2] << 8) |
-                                    (nextionRxBuffer[3] << 16) | (nextionRxBuffer[4] << 24)) >>> 0;
-                        nextionRxBuffer = new Uint8Array(0);
-                        frame08Count++;
-                        if (frame08History.length < 20) frame08History.push({chunk: chunksSent, off});
-                        log(`  0x08 frame @ chunk ${chunksSent}: off=${off} (0x${off.toString(16)}), filePos=${filePos}`, 'NEXTION');
-                        // Nextion v1.2 fast-upload semantics (per ESPHome ref impl):
-                        //   off >  0  → seek/resume to that absolute offset
-                        //   off == 0  → "continue forward", DO NOT rewind.
-                        // The old code did `filePos = off` unconditionally, so an
-                        // off==0 frame rewound to the start and re-sent the first
-                        // 4 KB block — desyncing the stream by one chunk and
-                        // producing "data error" at reboot (round NX4848E028).
-                        if (off >= fileSize) { filePos = fileSize; responded = true; break; }
-                        if (off > 0) filePos = off;   // off==0 → keep filePos (sequential)
-                        const end = Math.min(filePos + chunkSize, fileData.length);
-                        await nextionWriter.write(fileData.slice(filePos, end));
-                        filePos = end; chunksSent++; responded = true; break;
-                    } else if (nextionRxBuffer[0] !== 0x05 && nextionRxBuffer[0] !== 0x08) {
-                        // Only flag as unexpected if first byte is NOT a known
-                        // frame start. If it IS 0x08 but length < 5, keep
-                        // polling — the rest of the offset bytes are still
-                        // arriving (the round NX4848E028 sends 0x08 frames
-                        // fragmented in separate UART reads).
-                        const unknownByte = nextionRxBuffer[0];
-                        const hex = Array.from(nextionRxBuffer.slice(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
-                        log(`  ⚠ unexpected frame @ chunk ${chunksSent}: first=0x${unknownByte.toString(16)} buf=[${hex}]`, 'NEXTION');
-                        nextionRxBuffer = new Uint8Array(0);
-                    }
-                }
-                await new Promise(r => setTimeout(r, 20));
-            }
-            if (!responded) {
-                const bufHex = Array.from(nextionRxBuffer.slice(0,32)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
-                throw new Error(`no reply after chunk ${chunksSent}. rxBuf=${nextionRxBuffer.length}B [${bufHex}]`);
+        if (fileData.length !== fileSize) throw new Error('Nextion image size mismatch');
+        const transfer = await nextionTransferTft(fileData,
+            bytes => nextionWriter.write(bytes), () => nextionReadUploadFrame(), (filePos, chunksSent, frame) => {
+            if (frame.code === 0x05) frame05Count++;
+            else {
+                frame08Count++;
+                if (frame08History.length < 20) frame08History.push({chunk: chunksSent, off: frame.offset});
+                log(`  0x08 frame @ chunk ${chunksSent}: off=${frame.offset}, filePos=${filePos}`, 'NEXTION');
             }
             const pct = 20 + Math.round((filePos / fileSize) * 75);
             nextionSetProgress(pct);
@@ -1051,7 +1043,8 @@ async function nextionUpdate(tftData) {
                 const elapsed = ((Date.now() - uploadStart) / 1000).toFixed(1);
                 log(`  ${Math.round(filePos/1024)}/${Math.round(fileSize/1024)} KB (${Math.round(filePos*100/fileSize)}%) — ${chunksSent} chunks, ${elapsed}s`, 'NEXTION');
             }
-        }
+        });
+        const chunksSent = transfer.chunks;
 
         log(`upload complete: ${chunksSent} chunks (0x05=${frame05Count}, 0x08=${frame08Count}) in ${((Date.now()-uploadStart)/1000).toFixed(1)}s`, 'NEXTION');
         const expectedChunks = Math.ceil(fileSize / chunkSize);
@@ -1069,7 +1062,6 @@ async function nextionUpdate(tftData) {
         // still active here so we can read those bytes through STANDALONE.
         // Dump anything we get for 3 s so the operator can see what the
         // device is complaining about.
-        nextionRxBuffer = new Uint8Array(0);
         const sniffStart = Date.now();
         log('post-upload sniff (3 s) — listening for Nextion response…', 'NEXTION');
         while (Date.now() - sniffStart < 3000) {
@@ -1091,8 +1083,10 @@ async function nextionUpdate(tftData) {
             else if (buf[0] === 0x1E) log('  -> 0x1E = invalid params', 'NEXTION');
             else if (buf[0] === 0x1F) log('  -> 0x1F = IO failed', 'NEXTION');
             else if (buf[0] === 0x09) log('  -> 0x09 = invalid CRC (TFT corrupted)', 'NEXTION');
+            if ([0x09,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F].includes(buf[0]))
+                throw new Error(`Nextion rejected image: 0x${buf[0].toString(16)}`);
         } else {
-            log('post-upload: silence (display likely rebooting cleanly)', 'NEXTION');
+            log('post-upload: silence; running display version not verified', 'NEXTION');
         }
         nextionRxBuffer = new Uint8Array(0);
         // -------------------------------------------------------------------
@@ -1102,9 +1096,9 @@ async function nextionUpdate(tftData) {
         await new Promise(r => setTimeout(r, 500));
 
         nextionSetProgress(100);
-        log('NEXTION UPDATE COMPLETE — display will restart', 'NEXTION');
-        nextionSetStatus('Update complete', true);
-        nextionSetInfo('Nextion firmware updated successfully');
+        log('NEXTION TRANSFER ACKNOWLEDGED — verify the display after restart', 'NEXTION');
+        nextionSetStatus('Transfer acknowledged', true);
+        nextionSetInfo('Transfer confirmed; verify the running display after restart');
         setTimeout(() => nextionHideProgress(), 3000);
 
     } catch (err) {
@@ -1357,7 +1351,7 @@ const OTA_PKT_PAYLOAD  = 180;     // data bytes per packet (conservative for any
 const OTA_ACK_TIMEOUT  = 3000;    // ms to wait for a sector ACK
 const OTA_MAX_RETRIES  = 5;
 
-const ota = { device: null, server: null, char: null, waiter: null };
+const ota = { device: null, server: null, char: null, waiter: null, cancelWait: null, disconnectListener: null };
 
 function otaSetStatus(connected, text) {
     document.getElementById('otaStatusDot').classList.toggle('connected', connected);
@@ -1391,8 +1385,10 @@ function otaOnNotify(ev) {
 
 function otaWaitNotify(timeoutMs) {
     return new Promise((resolve, reject) => {
-        const t = setTimeout(() => { if (ota.waiter) { ota.waiter = null; reject(new Error('timeout')); } }, timeoutMs);
-        ota.waiter = (v) => { clearTimeout(t); resolve(v); };
+        const clear = () => { clearTimeout(t); ota.waiter = null; ota.cancelWait = null; };
+        const t = setTimeout(() => { clear(); reject(new Error('timeout')); }, timeoutMs);
+        ota.cancelWait = () => { clear(); reject(new Error('OTA cancelled')); };
+        ota.waiter = (v) => { clear(); resolve(v); };
     });
 }
 
@@ -1407,6 +1403,36 @@ async function otaWrite(bytes, withResponse) {
     }
 }
 
+function otaReleaseConnection() {
+    const device = ota.device;
+    ota.cancelWait?.();
+    try { ota.char?.removeEventListener('characteristicvaluechanged', otaOnNotify); } catch (_) {}
+    try { if (ota.disconnectListener) device?.removeEventListener('gattserverdisconnected', ota.disconnectListener); } catch (_) {}
+    ota.waiter = null;
+    ota.cancelWait = null;
+    ota.disconnectListener = null;
+    ota.char = null;
+    ota.server = null;
+    ota.device = null;
+    // Remove listeners before a local disconnect: cleanup is not reboot evidence.
+    try { if (device?.gatt?.connected) device.gatt.disconnect(); } catch (_) {}
+    otaSetStatus(false, 'Disconnected');
+}
+
+function otaWaitForReboot(device, timeoutMs) {
+    return new Promise(resolve => {
+        if (!device?.gatt?.connected) { resolve(true); return; }
+        const finish = observed => {
+            clearTimeout(timer);
+            device.removeEventListener('gattserverdisconnected', onDisconnect);
+            resolve(observed);
+        };
+        const onDisconnect = () => finish(true);
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        device.addEventListener('gattserverdisconnected', onDisconnect);
+    });
+}
+
 async function otaConnect() {
     if (!navigator.bluetooth) {
         log('Web Bluetooth NOT available — use Chrome/Edge desktop or Chrome Android (not iOS)', 'OTA');
@@ -1418,10 +1444,11 @@ async function otaConnect() {
             filters: [{ namePrefix: 'wazlley' }],
             optionalServices: [OTA_SERVICE_UUID],
         });
-        ota.device.addEventListener('gattserverdisconnected', () => {
+        ota.disconnectListener = () => {
             otaSetStatus(false, 'Disconnected');
             log('BLE disconnected', 'OTA');
-        });
+        };
+        ota.device.addEventListener('gattserverdisconnected', ota.disconnectListener);
         log(`connecting to ${ota.device.name}…`, 'OTA');
         ota.server  = await ota.device.gatt.connect();
         const svc   = await ota.server.getPrimaryService(OTA_SERVICE_UUID);
@@ -1439,7 +1466,7 @@ async function otaConnect() {
         return true;
     } catch (e) {
         log(`connect failed: ${e.message || e}`, 'OTA');
-        otaSetStatus(false, 'Disconnected');
+        otaReleaseConnection();
         return false;
     }
 }
@@ -1567,12 +1594,21 @@ async function otaRunUpdate(binData) {
             otaSetProgress((s / nSectors) * 100);
         }
         const secs = ((Date.now() - tStart) / 1000).toFixed(1);
-        log(`✅ OTA COMPLETE — ${nSectors} sectors, ${fw.length} bytes in ${secs}s.`, 'OTA');
+        log(`OTA TRANSFERRED — ${nSectors} sectors, ${fw.length} bytes in ${secs}s.`, 'OTA');
         log('Final sector ACK verified. Device reboot is expected; running version not verified.', 'OTA');
         log('The BLE disconnect that follows is normal.', 'OTA');
+        // The current bridge has no live running-version readback. An ACK (or
+        // disconnect) cannot produce a verified/installed result.
+        // Preserve time for autonomous verification/reboot before local cleanup.
+        // Expiry only means no disconnect was observed; it is not transfer failure.
+        const disconnectObserved = await otaWaitForReboot(ota.device, 8000);
+        return { status: 'transferred-unverified', runningVersion: null, disconnectObserved };
     } catch (e) {
         log(`OTA FAILED: ${e.message || e}`, 'OTA');
+        e.status = 'failed';
+        throw e;
     } finally {
+        otaReleaseConnection();
         cbtn.disabled = false;
     }
 }
@@ -1581,10 +1617,10 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.28-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.28-PDO-FULL.bin",
-        "size": 913456,
-        "sha256": "836e2ff2a21f32b0980f5298600307da0f40fbeabee105a9e2e32c5f26d17468"
+        "version": "V12.2.34-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.34-PDO-FULL.bin",
+        "size": 918944,
+        "sha256": "4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
@@ -1696,11 +1732,11 @@ document.getElementById('otaConnectBtn').addEventListener('click', async () => {
         transferStarted = true;
         await otaRunUpdate(image.data);
     } catch (e) {
-        log(`OTA non avviato: ${e.message || e}`, 'OTA');
+        log(`${transferStarted ? 'OTA fallito' : 'OTA non avviato'}: ${e.message || e}`, 'OTA');
     } finally {
-        // A failed download/validation never enters OTA. Do not disconnect a
-        // completed transfer here: the ESP32 still needs to verify and reboot.
-        if (!transferStarted && ota.device?.gatt?.connected) ota.device.gatt.disconnect();
+        // Transfers own their bounded reboot wait and cleanup. Preparation
+        // failures never enter OTA and can release the connection immediately.
+        if (!transferStarted) otaReleaseConnection();
         otaProfileBusy = false;
         otaLockProfile(false);
     }
