@@ -58,7 +58,7 @@ test('page, metadata and standard shared firmware agree', () => {
     assert.equal(catalog.sodium.version, 'V12.2.34-PDO-FULL');
     assert.equal(catalog.lithium.version, 'V12.2.28-LI10S-PDO-FULL');
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
-    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.1.10');
+    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.34-PDO-FULL');
 });
 test('always starts with sodium even when the browser restores lithium', () => {
     const h = harness();

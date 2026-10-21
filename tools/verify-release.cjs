@@ -14,8 +14,8 @@ function checkImage(b,p){
  const sodium=meta.internal_ota.profiles.sodium;
  assert.equal(meta.firmware,'V12.2.34-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
- assert.equal(meta.shared_firmware.version,'V12.1.10');
- assert.equal(meta.shared_firmware.sha256,'72af7bbc0dfb8631aa31073f47240455d5084cd7d4b51532933c281257c165a6');
+ assert.equal(meta.shared_firmware.version,'V12.2.34-PDO-FULL');
+ assert.equal(meta.shared_firmware.sha256,'4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4');
  for(const p of Object.values(meta.internal_ota.profiles)){
   checkImage(fs.readFileSync(path.join(root,p.path)),p);
   console.log(`LOCAL ${p.version}: ${p.size} bytes SHA256 ${p.sha256}`);
@@ -41,6 +41,6 @@ function checkImage(b,p){
   checkImage(await get(meta.shared_firmware.path),meta.shared_firmware);
   for(const f of meta.internal_usb.files){const b=await get(f.path);assert.equal(b.length,f.size);assert.equal(hash(b),f.sha256);}
   for(const p of ['index.html','fleet.html'])assert.equal(hash(await get(p)),hash(fs.readFileSync(path.join(root,p))),`${p} deployment mismatch`);
-  console.log(`LIVE VERIFIED: firmware ${meta.firmware}, Flasher ${meta.flasher}, Fleet ${meta.fleet}; both OTA profiles and isolated USB files match; customer shared binary remains V12.1.10.`);
+  console.log(`LIVE VERIFIED: firmware ${meta.firmware}, Flasher ${meta.flasher}, Fleet ${meta.fleet}; both OTA profiles and isolated USB files match; customer shared binary is ${meta.shared_firmware.version}.`);
  }
 })().catch(e=>{console.error('RELEASE VERIFICATION FAILED:',e.message);process.exitCode=1;});
