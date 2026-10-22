@@ -12,14 +12,17 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.2.49-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.2.50-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
- assert.equal(meta.shared_firmware.version,'V12.2.48-PDO-FULL');
- assert.equal(meta.shared_firmware.sha256,'e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30');
+ assert.equal(meta.recovery_ota.source_version,'V12.2.34-PDO-FULL');
+ assert.equal(meta.recovery_ota.version,'V12.2.49-PDO-FULL');
+ assert.equal(meta.shared_firmware.version,'V12.2.50-PDO-FULL');
+ assert.equal(meta.shared_firmware.sha256,'ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a');
  for(const p of Object.values(meta.internal_ota.profiles)){
   checkImage(fs.readFileSync(path.join(root,p.path)),p);
   console.log(`LOCAL ${p.version}: ${p.size} bytes SHA256 ${p.sha256}`);
  }
+ checkImage(fs.readFileSync(path.join(root,meta.recovery_ota.path)),meta.recovery_ota);
  checkImage(fs.readFileSync(path.join(root,meta.shared_firmware.path)),meta.shared_firmware);
  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
  const usb=JSON.parse(html.match(/STANDALONE: (\[[^]*?\]),/)[1]);

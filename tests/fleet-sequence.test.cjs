@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(require('node:path').join(__dirname, '../fleet.html'), 'utf8');
 const source = html.match(/async function updateSequence\([^]*?^}/m)[0];
 
-async function run(mode, failure, version = 'V12.2.49-PDO-FULL') {
+async function run(mode, failure, version = 'V12.2.50-PDO-FULL') {
   const events = [], results = [], elements = {};
   const row = {device:{name:'test'}, retryBtn:{}, reselectBtn:{}, prog:{style:{}}};
   const ctx = {
@@ -38,7 +38,7 @@ async function run(mode, failure, version = 'V12.2.49-PDO-FULL') {
   assert.deepEqual(r.events,['load','firmware','wait:11000','parameters','complete:true','wait:1500']);
   r = await run('firmware');
   assert.deepEqual(r.events,['firmware','complete:true','wait:1500']);
-  assert.match(r.results[0].mode,/V12.2.49-PDO-FULL/);
+  assert.match(r.results[0].mode,/V12.2.50-PDO-FULL/);
   for(const failure of ['firmware','motors']) {
     r=await run('firmware', failure);
     assert(!r.events.includes('parameters'));

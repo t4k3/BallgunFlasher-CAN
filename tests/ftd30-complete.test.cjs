@@ -22,7 +22,7 @@ const restoreSource=html.match(/async function fparRestoreBoth\([^]*?^}/m)[0];
 assert.doesNotMatch(restoreSource,/\b(?:confirm|alert)\s*\(/,'Direct parameter load must not open browser popups');
 const bytes=fs.readFileSync(root+'/FTD30/waz_nodo2.prm');
 function harness(){
- const controls={},storage={},calls=[],logs=[];
+ const controls={},storage={},calls=[],logs=[],statuses=[],progress=[];
  const device={id:'casoria-id',name:'wazlley_E56E',gatt:{connected:true,disconnect(){this.connected=false;}}};
  const c={FPAR:{busy:false,char:{},device,server:{getPrimaryService:async()=>{throw Error('no DIS');}}},
   FPAR_BATCH:24,FPAR_VERIFY_IDX:[1,21,67,78,84,200],
@@ -30,7 +30,7 @@ function harness(){
   FPAR_PENDING_KEY:'pending',FIRMWARE_BASE:'https://example.invalid',
   Uint8Array,TextDecoder,Date,AbortSignal,crypto:webcrypto,
   FQ:id=>controls[id]||(controls[id]={checked:false}),confirm:()=>true,
-  log:s=>logs.push(s),fparStatus:(ok,s)=>c.status={ok,s},fparProgress:()=>{},
+  log:s=>logs.push(s),fparStatus:(ok,s)=>{c.status={ok,s};statuses.push(s);},fparProgress:p=>progress.push(p),
   localStorage:{getItem:k=>storage[k]||null,setItem:(k,v)=>{storage[k]=v;}},
   fetch:async()=>({ok:true,arrayBuffer:async()=>Uint8Array.from(bytes).buffer}),
   fparConnect:async()=>{c.FPAR.device=device;c.FPAR.char={};device.gatt.connected=true;}
@@ -54,7 +54,7 @@ function harness(){
   assert.notEqual(value,undefined,`index ${idx}`);
   return [0xfc,4,0,value&255,value>>>8&255,value>>>16&255,value>>>24,4];
  };
- return {c,calls,controls,storage,data,device,logs,fail:fn=>fail=fn,cap:v=>cap=v};
+ return {c,calls,controls,storage,data,device,logs,statuses,progress,fail:fn=>fail=fn,cap:v=>cap=v};
 }
 (async()=>{
  let h=harness();await h.c.fparCompleteCheck();
@@ -75,6 +75,11 @@ function harness(){
  assert(h.calls.slice(0,firstWrite).some(p=>p[1]===1),'capability checked before writing');
  assert.deepEqual([...new Set(h.calls.slice(0,firstWrite).filter(p=>p[1]===4).map(p=>p[2]))],[1,2]);
  assert.deepEqual(h.calls.filter(p=>p[1]===3).map(p=>p[2]),[1,2]);
+ assert(h.statuses.some(s=>/NODE 1: scrittura 1022\/1022/.test(s)));
+ assert(h.statuses.some(s=>/NODE 1: verifica 1022\/1022 prima del SAVE/.test(s)));
+ assert(h.statuses.some(s=>/NODE 2: SAVE OK · controllo finale/.test(s)));
+ assert(h.progress.some(p=>p>40&&p<90),'full readback visibly advances the progress bar');
+ assert.match(h.logs.join('\n'),/NODE 1: verifica 128\/1022/);
  for(const node of [1,2]){
   const packets=h.calls.filter(p=>p[1]===2&&p[2]===node);
   assert.equal(packets.reduce((sum,p)=>sum+p[3],0),1022);

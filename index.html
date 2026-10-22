@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.40</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.42</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.40</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.42</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -271,7 +271,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.49-PDO-FULL · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.50-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <button class="btn-connect" id="otaRecoveryBtn">Recovery V12.2.34 → V12.2.49</button>
             <div class="chip-info">Recovery: spegni 10 secondi, riaccendi, non premere START, poi usa il pulsante dedicato. Nessun comando START/STOP viene inviato.</div>
@@ -333,7 +333,7 @@
                 <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
             </div>
             <div class="progress" id="fparWriteProgress"><div class="progress-bar nextion" id="fparWriteProgressBar"></div></div>
-            <div class="chip-info" id="fparWriteInfo">Azione diretta senza popup: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive e salva il set corretto. Tutte le informazioni appaiono in console. P994 e P1012 restano invariati.</div>
+            <div class="chip-info" id="fparWriteInfo">Azione diretta senza popup: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive, rilegge tutti i 1022 parametri e salva il set corretto. La verifica può richiedere alcuni minuti: stato, conteggio e avanzamento restano visibili. P994 e P1012 restano invariati.</div>
         </div>
 
         <!-- FTD30 CONTROLLO PARAMETRI (sola lettura) -->
@@ -359,7 +359,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.40 · OTA interno V12.2.49-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.42 · OTA interno V12.2.50-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1721,10 +1721,10 @@ async function otaRunUpdate(binData, options = {}) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.49-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.49-PDO-FULL.bin",
+        "version": "V12.2.50-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.50-PDO-FULL.bin",
         "size": 919120,
-        "sha256": "7f50f29fc876909607177e2f717b2c708b00b50d9cb59d77346c3c61cb423f16"
+        "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
@@ -1735,6 +1735,13 @@ const OTA_BATTERY_PROFILES = Object.freeze({
     }
 });
 Object.values(OTA_BATTERY_PROFILES).forEach(Object.freeze);
+const OTA_RECOVERY_PROFILE = Object.freeze({
+    "label": "Recovery V12.2.34 → V12.2.49",
+    "version": "V12.2.49-PDO-FULL",
+    "path": "INTERNAL/OTA/naion-11s/V12.2.49-PDO-FULL.bin",
+    "size": 919120,
+    "sha256": "7f50f29fc876909607177e2f717b2c708b00b50d9cb59d77346c3c61cb423f16"
+});
 let otaCustomBin = null;
 let otaProfileBusy = false;
 const otaProfileSelect = document.getElementById('otaBatteryProfile');
@@ -1859,7 +1866,7 @@ document.getElementById('otaRecoveryBtn').addEventListener('click', async () => 
         log(`Recovery: firmware installato ${installed}`, 'OTA');
         if (installed !== 'V12.2.34-PDO-FULL')
             throw new Error(`Recovery consentita solo da V12.2.34-PDO-FULL; rilevato ${installed}`);
-        const profile = OTA_BATTERY_PROFILES.sodium;
+        const profile = OTA_RECOVERY_PROFILE;
         log(`Preparazione Recovery ${installed} → ${profile.version}`, 'OTA');
         const image = await otaLoadSelection({ profile });
         if (image.version !== 'V12.2.49-PDO-FULL')
@@ -2473,6 +2480,8 @@ function fparRestoreFailure(message, partial=false){
 async function fparRestoreNode(node, params, label, onSaved=null){
     // Preserve board calibration and identity regardless of password permissions.
     params = params.filter(p => p.index !== 994 && p.index !== 1012);
+    fparProgress(0);
+    fparStatus(true,`${label}: preparazione scrittura 0/${params.length}`);
     log(`${label}: P994 (DC Link Adj) e P1012 (Serial Number) esclusi dalla scrittura`, 'FTD30');
     if(!onSaved)fparInvalidateVerification('Nuova scrittura parametri: verifica precedente invalidata',true);
     log(`${label} (node ${node}): ${params.length} parametri…`, 'FTD30');
@@ -2503,17 +2512,30 @@ async function fparRestoreNode(node, params, label, onSaved=null){
             if(written!==chunk.length || skipped!==0)
                 throw fparRestoreFailure(`Batch incompleto: ${written}/${chunk.length}, ${skipped} saltati. SAVE non eseguito`,ok+written>0);
             ok+=written;skip+=skipped;
-            fparProgress((i+chunk.length)/params.length*100);
+            const writtenNow=i+chunk.length;
+            fparProgress(writtenNow/params.length*40);
+            fparStatus(true,`${label}: scrittura ${writtenNow}/${params.length}`);
         }
         log(`  ${label}: scritti ${ok}, saltati ${skip} (read-only/inesistenti)`, 'FTD30');
-        await fparVerifyAll(node, params, label);
+        fparStatus(true,`${label}: verifica 0/${params.length} prima del SAVE`);
+        log(`${label}: inizio verifica completa ${params.length} parametri prima del SAVE`, 'FTD30');
+        await fparVerifyAll(node, params, label, (done,total)=>{
+            fparProgress(40+(done/total)*50);
+            fparStatus(true,`${label}: verifica ${done}/${total} prima del SAVE`);
+        });
+        fparProgress(92);
+        fparStatus(true,`${label}: SAVE in flash…`);
         const sv = await fparCmd([0xFC, 0x03, node], 8000);
         const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
         log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
         if (!saveOk) throw fparRestoreFailure('SAVE fallito: persistenza non confermata',true);
         if(onSaved)onSaved(node); // Persist ACK immediately, even if subsequent readback fails.
         // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
+        fparProgress(96);
+        fparStatus(true,`${label}: SAVE OK · controllo finale 6 parametri…`);
         const verifyOk = await fparVerifyNode(node, params, label);
+        fparProgress(100);
+        fparStatus(verifyOk,verifyOk ? `${label}: completato · SAVE OK · controllo 6/6` : `${label}: SAVE OK · controllo finale con anomalie`);
         return { ok, skip, saveOk, verifyOk };
     } catch(e){
         if(ok>0)e.fparPartial=true;
@@ -2521,10 +2543,11 @@ async function fparRestoreNode(node, params, label, onSaved=null){
     }
 }
 
-async function fparVerifyAll(node, params, label){
+async function fparVerifyAll(node, params, label, onProgress=null){
     params = params.filter(p => p.index !== 994 && p.index !== 1012);
     let errors = 0;
-    for (const p of params) {
+    for (let i=0;i<params.length;i++) {
+        const p=params[i];
         const r = await fparCmd([0xFC, 0x04, node, p.index & 255, p.index >> 8], 5000);
         if (r.length !== 8 || r[0] !== 0xFC || r[1] !== 4 || r[2] !== 0 || ![1,2,3,4].includes(r[7]))
             throw new Error(`P${p.index}: lettura fallita (stato=${r[2]}, byte=${r[7]}). SAVE non eseguito`);
@@ -2535,6 +2558,10 @@ async function fparVerifyAll(node, params, label){
             errors++;
             log(`${label} P${p.index}: letto=${got}, atteso=${expected}`, 'FTD30');
         }
+        const done=i+1;
+        if(done===1 || done%16===0 || done===params.length) onProgress?.(done,params.length);
+        if(done%128===0 || done===params.length)
+            log(`${label}: verifica ${done}/${params.length}${done===params.length?' completata':'…'}`, 'FTD30');
     }
     if (errors) throw new Error(`${errors} discrepanze su ${params.length}: SAVE non eseguito (valori in RAM già modificati)`);
     log(`${label}: verifica completa ${params.length}/${params.length} OK prima del SAVE`, 'FTD30');

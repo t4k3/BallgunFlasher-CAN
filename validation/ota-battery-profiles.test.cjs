@@ -11,8 +11,10 @@ const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const code = html.slice(html.indexOf('// OTA BATTERY PROFILES:'), html.indexOf('// END OTA BATTERY PROFILES'));
 const metadata = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8'));
 const catalog = metadata.internal_ota.profiles;
+const recovery = metadata.recovery_ota;
 function image(key) {
-    return Uint8Array.from(fs.readFileSync(path.join(root, catalog[key].path))).buffer;
+    const profile = key === 'recovery' ? recovery : catalog[key];
+    return Uint8Array.from(fs.readFileSync(path.join(root, profile.path))).buffer;
 }
 function harness({ restored = 'lithium', fetchResult, connectResult = true, connectHook,
                    installedVersion = 'V12.2.34-PDO-FULL' } = {}) {
@@ -40,7 +42,7 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
         fetch: async (url, options) => {
             state.requests.push(url); assert.equal(options.cache, 'no-store');
             if (fetchResult) return fetchResult(url);
-            const profile = Object.entries(catalog).find(([, p]) => url.includes('/' + p.path + '?'));
+            const profile = [...Object.entries(catalog), ['recovery', recovery]].find(([, p]) => url.includes('/' + p.path + '?'));
             assert.ok(profile, `Unexpected URL ${url}`);
             return { ok: true, arrayBuffer: async () => image(profile[0]) };
         }
@@ -55,18 +57,19 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
     for(const match of html.matchAll(/flasher-(\d+\.\d+\.\d+)/g)) assert.equal(match[1],metadata.flasher,'All visible build labels must agree');
-    assert.equal(metadata.flasher, '1.5.40');
-    assert.equal(metadata.firmware, 'V12.2.49-PDO-FULL');
+    assert.equal(metadata.flasher, '1.5.42');
+    assert.equal(metadata.firmware, 'V12.2.50-PDO-FULL');
     assert.equal(metadata.internal_ota.default, 'sodium');
-    assert.equal(catalog.sodium.version, 'V12.2.49-PDO-FULL');
+    assert.equal(catalog.sodium.version, 'V12.2.50-PDO-FULL');
     assert.equal(catalog.lithium.version, 'V12.2.28-LI10S-PDO-FULL');
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
-    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.48-PDO-FULL');
+    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.50-PDO-FULL');
+    assert.equal(recovery.version, 'V12.2.49-PDO-FULL');
 });
 test('always starts with sodium even when the browser restores lithium', () => {
     const h = harness();
     assert.equal(h.elements.otaBatteryProfile.value, 'sodium');
-    assert.equal(h.elements.otaVersion.textContent, 'V12.2.49-PDO-FULL');
+    assert.equal(h.elements.otaVersion.textContent, 'V12.2.50-PDO-FULL');
     assert.match(h.elements.otaProfileInfo.textContent, /Sodio/);
     h.select('lithium');
     assert.equal(h.elements.otaVersion.textContent, 'V12.2.28-LI10S-PDO-FULL');
@@ -164,7 +167,7 @@ test('Recovery requires exact 12.2.34 and always uses verified sodium 12.2.49', 
     await h.recover();
     assert.equal(h.state.connections, 1);
     assert.equal(h.state.transfers.length, 1);
-    assert.deepEqual(new Uint8Array(h.state.transfers[0]), new Uint8Array(image('sodium')));
+    assert.deepEqual(new Uint8Array(h.state.transfers[0]), new Uint8Array(image('recovery')));
     assert.equal(h.state.runOptions[0].recovery34, true);
     assert.ok(h.state.logs.some(line => line.includes('V12.2.34-PDO-FULL') && line.includes('V12.2.49-PDO-FULL')));
 });
