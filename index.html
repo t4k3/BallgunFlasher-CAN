@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.34</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.35</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.34</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.35</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -319,7 +319,7 @@
         <div class="device-panel ftd30">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4 M12 19v4 M1 12h4 M19 12h4" stroke="currentColor" stroke-width="2"/></svg>
-                CHECK FTD30 <span class="sub">CAN · sola lettura</span>
+                FTD30 PARAMETRI <span class="sub">CAN · via BLE</span>
             </h2>
             <div class="status">
                 <div class="status-dot" id="fparStatusDot"></div>
@@ -332,7 +332,7 @@
                 <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
             </div>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Check in sola lettura, dettagli in console. Dopo un check completo con differenze puoi richiedere l’aggiornamento di entrambi i nodi. P994 e P1012 restano invariati. Motori fermi; con PDO, riavvio completo con driver alimentati, senza Start. Scrittura disponibile solo con firmware che supporta la manutenzione.</div>
+            <div class="chip-info" id="fparInfo">Prima controlla entrambi i nodi senza scrivere. Se ci sono differenze puoi aggiornare i 1022 parametri consentiti su nodo 1 e nodo 2. P994 e P1012 restano invariati. Motori fermi, Home/Stop, driver alimentati e nessun allarme.</div>
         </div>
     </div>
 
@@ -343,7 +343,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.34 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.35 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2755,7 +2755,6 @@ async function fparRestoreBoth(){
         if(FPAR.device.id!==FPAR.checkedDeviceId)throw new Error('Macchina diversa da quella controllata: ripetere il Check completo. Nessuna scrittura');
         const set=await fparCanonical();
         const cap=await fparCmd([0xFC,1],5000);
-        if(cap.length===3 && (cap[2]&0x80))throw new Error('Questa versione PDO permette solo il check: scrittura/SAVE non disponibili. Serve firmware con manutenzione PDO dedicata. Nessuna scrittura');
         if(cap.length!==3||cap[0]!==0xFC||cap[1]!==1||cap[2]===0xEE||(cap[2]&3)!==3)
             throw new Error('Firmware senza sblocco PW=11 verificato: nessuna scrittura');
         const nodes=await fparSnapshot();

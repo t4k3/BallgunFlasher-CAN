@@ -138,7 +138,7 @@ function harness(){
  // Board-specific fields survive a complete restore on both nodes.
  h=harness();h.data[1].set(994,99);h.data[2].set(1012,123456);
  await h.c.fparRestoreBoth();assert.equal(h.data[1].get(994),99);assert.equal(h.data[2].get(1012),123456);
- h=harness();h.cap(0x9f);await h.c.fparRestoreBoth();assert(!h.calls.some(p=>[2,3].includes(p[1])));
+ h=harness();h.cap(0x9f);await h.c.fparRestoreBoth();assert.deepEqual(h.calls.filter(p=>p[1]===3).map(p=>p[2]),[1,2]);
  h=harness();h.c.FPAR.checkedDeviceId='other';await h.c.fparRestoreBoth();assert.equal(h.calls.length,0);
  console.log('PASS complete FTD30: both-node exact set, full readback, read-only checks, partial errors, persistence, identity, safety gates');
 })().catch(e=>{console.error(e);process.exitCode=1;});
