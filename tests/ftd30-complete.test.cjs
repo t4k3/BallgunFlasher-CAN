@@ -13,11 +13,13 @@ assert.match(card,/Non è necessaria prima del caricamento/);
 assert(!/id="fpar(?:SetFile|DiagnosticBtn|RestoreBtn)"/.test(card));
 assert(!/id="fparReport"/.test(card),'Reports belong only in the console, not the card');
 assert.deepEqual([...html.matchAll(/FQ\('([^']+)'\)\.addEventListener/g)].map(m=>m[1]),['fparCheckBtn','fparBothBtn','fparRebootBtn']);
-const names=['fparParsePrm','fparPrep','fparRestoreNode','fparVerifyAll','fparVerifyNode','fparReadParam',
+const names=['fparParsePrm','fparPrep','fparRestoreFailure','fparRestoreNode','fparVerifyAll','fparVerifyNode','fparReadParam',
  'fparReport','fparPendingRecords','fparPendingShow','fparPendingStore','fparInvalidateVerification','fparCanonical','fparValue',
  'fparSame','fparCompare','fparEspVersion','fparSnapshot','fparSafeNodes','fparSummary',
  'fparCompleteCheck','fparRestoreBoth','fparVerifyReboot'];
 const source=names.map(n=>{const m=html.match(new RegExp(`(?:async )?function ${n}\\([^]*?^}`,'m'));assert(m,n);return m[0];}).join('\n');
+const restoreSource=html.match(/async function fparRestoreBoth\([^]*?^}/m)[0];
+assert.doesNotMatch(restoreSource,/\b(?:confirm|alert)\s*\(/,'Direct parameter load must not open browser popups');
 const bytes=fs.readFileSync(root+'/FTD30/waz_nodo2.prm');
 function harness(){
  const controls={},storage={},calls=[],logs=[];
@@ -102,12 +104,16 @@ function harness(){
   h=>h.c.FPAR_CANONICAL_SHA='bad',
   h=>h.data[2].set(1,1),
   h=>h.cap(1),
-  h=>h.fail(p=>p[1]===4&&(p[3]|p[4]<<8)===0x1218?[0xfc,4,0,1,0,0,0,4]:null),
-  h=>h.c.confirm=()=>false
+  h=>h.fail(p=>p[1]===4&&(p[3]|p[4]<<8)===0x1218?[0xfc,4,0,1,0,0,0,4]:null)
  ]){
   h=harness();setup(h);await h.c.fparRestoreBoth();assert(!h.calls.some(p=>[2,3].includes(p[1])));assert(!h.c.FPAR.busy);
  }
  h=harness();h.fail(p=>p[1]===2?[0xfc,2,0xe1]:null);await h.c.fparRestoreBoth();assert(!h.calls.some(p=>p[1]===3));
+ assert.match(h.logs.join('\n'),/PW=11 fallito[^]*Nessun parametro scritto e nessun SAVE/);
+ assert.doesNotMatch(h.logs.join('\n'),/Possibili modifiche parziali/);
+ h=harness();h.fail(p=>p[1]===2?[0xfc,2,0xee]:null);await h.c.fparRestoreBoth();
+ assert.match(h.logs.join('\n'),/manutenzione rifiutata[^]*Nessun parametro scritto e nessun SAVE/);
+ assert.doesNotMatch(h.logs.join('\n'),/Possibili modifiche parziali/);
  h=harness();h.fail(p=>p[1]===4&&(p[3]|p[4]<<8)===0x4041?[0xfc,4,0,0,4,0,0,4]:null);
  await h.c.fparRestoreBoth();assert(h.calls.some(p=>p[1]===2),'0x0400 is not operation enabled and permits repair');
  h=harness();h.fail(p=>p[1]===4&&(p[3]|p[4]<<8)===78?[0xfc,4,0,0,0,0,0,4]:null);

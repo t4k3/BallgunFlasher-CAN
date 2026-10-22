@@ -12,10 +12,10 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.2.34-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.2.48-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
- assert.equal(meta.shared_firmware.version,'V12.2.34-PDO-FULL');
- assert.equal(meta.shared_firmware.sha256,'4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4');
+ assert.equal(meta.shared_firmware.version,'V12.2.48-PDO-FULL');
+ assert.equal(meta.shared_firmware.sha256,'e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30');
  for(const p of Object.values(meta.internal_ota.profiles)){
   checkImage(fs.readFileSync(path.join(root,p.path)),p);
   console.log(`LOCAL ${p.version}: ${p.size} bytes SHA256 ${p.sha256}`);

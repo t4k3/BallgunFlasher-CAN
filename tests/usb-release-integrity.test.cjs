@@ -12,7 +12,7 @@ async function run(corrupt){
  return {ok:await ctx.flashFiles('standalone',config,'USB',null),events,logs};
 }
 test('USB internal release uses verified isolated files before erase',async()=>{
- assert(config.every(f=>f.file.startsWith('INTERNAL/USB/V12.2.34-PDO-FULL/')));
+ assert(config.every(f=>f.file.startsWith('INTERNAL/USB/V12.2.48-PDO-FULL/')));
  const r=await run();assert.equal(r.ok,true);assert.equal(r.events[0],'erase');assert.deepEqual(Array.from(r.events[1]),[0,0x8000,0xe000,0x10000]);assert.equal(r.events[2],'reset');
 });
 for(const file of config.map(f=>path.basename(f.file)))test(`USB tampered ${file} blocks erase and all writes`,async()=>{

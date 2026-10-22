@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),asse
 const {test}=require('node:test');
 const html=fs.readFileSync(path.join(__dirname,'../fleet.html'),'utf8');
 const source=html.match(/^async function verifyFleetRunningVersion\([^]*?^}/m)[0];
-const target='V12.2.34-PDO-FULL';
+const target='V12.2.48-PDO-FULL';
 const turn=()=>new Promise(r=>setImmediate(r));
 
 async function run(scenario, purpose = 'post-update'){

@@ -13,6 +13,6 @@ async function run(change){
   $:id=>elements[id]||=( {}),log(){},fetch:async()=>++step===1?{ok:true,json:async()=>catalog}:{ok:change!=='404',status:404,arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.length)}};
  vm.createContext(ctx);vm.runInContext(source,ctx);
  if(change){await assert.rejects(ctx.downloadFirmware());assert.equal(ctx.firmwareBytes,null);assert.equal(ctx.firmwareVersion,null);}
- else {await ctx.downloadFirmware();assert.equal(ctx.firmwareVersion,'V12.2.34-PDO-FULL');assert.equal(Buffer.compare(Buffer.from(ctx.firmwareBytes),image),0);}
+ else {await ctx.downloadFirmware();assert.equal(ctx.firmwareVersion,'V12.2.48-PDO-FULL');assert.equal(Buffer.compare(Buffer.from(ctx.firmwareBytes),image),0);}
 }
 (async()=>{await run();for(const c of ['old','hash','chip','version','404'])await run(c);console.log('PASS Fleet integrity: matching release accepted; old catalog, wrong hash/chip/version and HTTP error blocked before OTA');})().catch(e=>{console.error(e);process.exitCode=1;});

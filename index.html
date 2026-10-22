@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.36</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.37</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.36</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.37</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -271,7 +271,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.34-PDO-FULL · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.48-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -331,7 +331,7 @@
                 <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
             </div>
             <div class="progress" id="fparWriteProgress"><div class="progress-bar nextion" id="fparWriteProgressBar"></div></div>
-            <div class="chip-info" id="fparWriteInfo">Azione diretta: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive e salva il set corretto. P994 e P1012 restano invariati.</div>
+            <div class="chip-info" id="fparWriteInfo">Azione diretta senza popup: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive e salva il set corretto. Tutte le informazioni appaiono in console. P994 e P1012 restano invariati.</div>
         </div>
 
         <!-- FTD30 CONTROLLO PARAMETRI (sola lettura) -->
@@ -357,7 +357,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.36 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.37 · OTA interno V12.2.48-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -382,27 +382,27 @@ const FLASH_CONFIG = {
     STANDALONE: [
         {
             "offset": 0,
-            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/bootloader.bin",
+            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/bootloader.bin",
             "size": 22128,
-            "sha256": "a7293464c96cd5e71ec2cb0e6dfa7181e4102202844a7a582d51e18d5aa73b18"
+            "sha256": "f94b145cfc32863b45b7598300c6ec6bd0b11c32d1e6a505a951a3c3e4e11092"
         },
         {
             "offset": 32768,
-            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/partition-table.bin",
+            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/partition-table.bin",
             "size": 3072,
             "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
         },
         {
             "offset": 57344,
-            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/ota_data_initial.bin",
+            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/ota_data_initial.bin",
             "size": 8192,
             "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
         },
         {
             "offset": 65536,
-            "file": "INTERNAL/USB/V12.2.34-PDO-FULL/BallgunSTANDALONE.bin",
-            "size": 918944,
-            "sha256": "4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4"
+            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/BallgunSTANDALONE.bin",
+            "size": 918960,
+            "sha256": "e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30"
         }
     ],
     PINSCAN: [
@@ -434,7 +434,7 @@ if (!('serial' in navigator)) {
 // Load STANDALONE version label from remote bin (best-effort)
 (async () => {
     try {
-        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.34-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.48-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
         if (!r.ok) return;
         const buf = new Uint8Array(await r.arrayBuffer());
         const ver = new TextDecoder().decode(buf.subarray(48,80)).split('\0')[0];
@@ -1631,10 +1631,10 @@ async function otaRunUpdate(binData) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.34-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.34-PDO-FULL.bin",
-        "size": 918944,
-        "sha256": "4fb270fde208be10477f761f771340d32c824beb6e24c3d83f6ac1a166a917a4"
+        "version": "V12.2.48-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.48-PDO-FULL.bin",
+        "size": 918960,
+        "sha256": "e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
@@ -2346,6 +2346,9 @@ async function fparConnect(){
     await new Promise(r => setTimeout(r, 600));   // assestamento BLE
 }
 
+function fparRestoreFailure(message, partial=false){
+    const error=new Error(message);error.fparPartial=partial;return error;
+}
 async function fparRestoreNode(node, params, label, onSaved=null){
     // Preserve board calibration and identity regardless of password permissions.
     params = params.filter(p => p.index !== 994 && p.index !== 1012);
@@ -2353,32 +2356,48 @@ async function fparRestoreNode(node, params, label, onSaved=null){
     if(!onSaved)fparInvalidateVerification('Nuova scrittura parametri: verifica precedente invalidata',true);
     log(`${label} (node ${node}): ${params.length} parametri…`, 'FTD30');
     let ok = 0, skip = 0;
-    for (let i = 0; i < params.length; i += FPAR_BATCH) {
-        const chunk = params.slice(i, i + FPAR_BATCH);
-        const pkt = [0xFC, 0x02, node, chunk.length];
-        for (const p of chunk) {
-            pkt.push(p.index & 0xFF, (p.index >> 8) & 0xFF,
-                     p.value & 0xFF, (p.value >> 8) & 0xFF, (p.value >> 16) & 0xFF, (p.value >> 24) & 0xFF);
+    try {
+        for (let i = 0; i < params.length; i += FPAR_BATCH) {
+            const chunk = params.slice(i, i + FPAR_BATCH);
+            const pkt = [0xFC, 0x02, node, chunk.length];
+            for (const p of chunk) {
+                pkt.push(p.index & 0xFF, (p.index >> 8) & 0xFF,
+                         p.value & 0xFF, (p.value >> 8) & 0xFF, (p.value >> 16) & 0xFF, (p.value >> 24) & 0xFF);
+            }
+            let r;
+            try { r=await fparCmd(pkt,15000); }
+            catch(e){e.fparPartial=true;throw e;} // nessun ACK: esito della richiesta ambiguo
+            if(r.length===3 && r[0]===0xFC && r[1]===0x02){
+                const reason={
+                    0xEE:'Firmware ESP32: manutenzione rifiutata per questo nodo (stato/RPM/STOP non ammessi)',
+                    0xE1:'Sblocco PW=11 fallito: batch non scritto',
+                    0xE2:'Batch non valido: formato, nodo o indice rifiutato prima della scrittura',
+                    0xEF:'BLE scollegato durante il batch'
+                }[r[2]]||`Batch rifiutato: codice 0x${r[2].toString(16)}`;
+                throw fparRestoreFailure(reason,ok>0);
+            }
+            if(r.length!==6 || r[0]!==0xFC || r[1]!==0x02)
+                throw fparRestoreFailure('Risposta batch non valida: esito della scrittura non determinabile',true);
+            const written=r[2]|(r[3]<<8),skipped=r[4]|(r[5]<<8);
+            if(written!==chunk.length || skipped!==0)
+                throw fparRestoreFailure(`Batch incompleto: ${written}/${chunk.length}, ${skipped} saltati. SAVE non eseguito`,ok+written>0);
+            ok+=written;skip+=skipped;
+            fparProgress((i+chunk.length)/params.length*100);
         }
-        const r = await fparCmd(pkt, 15000);
-        if (r.length !== 6 || r[0] !== 0xFC || r[1] !== 0x02)
-            throw new Error(r[2] === 0xE1 ? 'Sblocco PW=11 fallito: batch non scritto' : 'Batch rifiutato o risposta non valida');
-        const written = r[2] | (r[3] << 8), skipped = r[4] | (r[5] << 8);
-        if (written !== chunk.length || skipped !== 0)
-            throw new Error(`Batch incompleto: ${written}/${chunk.length}, ${skipped} saltati. SAVE non eseguito`);
-        ok += written; skip += skipped;
-        fparProgress((i + chunk.length) / params.length * 100);
+        log(`  ${label}: scritti ${ok}, saltati ${skip} (read-only/inesistenti)`, 'FTD30');
+        await fparVerifyAll(node, params, label);
+        const sv = await fparCmd([0xFC, 0x03, node], 8000);
+        const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
+        log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
+        if (!saveOk) throw fparRestoreFailure('SAVE fallito: persistenza non confermata',true);
+        if(onSaved)onSaved(node); // Persist ACK immediately, even if subsequent readback fails.
+        // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
+        const verifyOk = await fparVerifyNode(node, params, label);
+        return { ok, skip, saveOk, verifyOk };
+    } catch(e){
+        if(ok>0)e.fparPartial=true;
+        throw e;
     }
-    log(`  ${label}: scritti ${ok}, saltati ${skip} (read-only/inesistenti)`, 'FTD30');
-    await fparVerifyAll(node, params, label);
-    const sv = await fparCmd([0xFC, 0x03, node], 8000);
-    const saveOk = (sv.length >= 3 && sv[1] === 0x03 && sv[2] === 0);
-    log(`  ${label}: SAVE in flash -> ${saveOk ? 'OK' : 'FALLITO'}`, 'FTD30');
-    if (!saveOk) throw new Error('SAVE fallito: persistenza non confermata');
-    if(onSaved)onSaved(node); // Persist ACK immediately, even if subsequent readback fails.
-    // Verifica post-restore: rilegge alcuni parametri-chiave e li confronta col set scritto.
-    const verifyOk = await fparVerifyNode(node, params, label);
-    return { ok, skip, saveOk, verifyOk };
 }
 
 async function fparVerifyAll(node, params, label){
@@ -2770,7 +2789,7 @@ async function fparRestoreBoth(){
         const nodes=await fparSnapshot();
         fparReport(fparSummary(nodes,await fparEspVersion()));
         if(!fparSafeNodes(nodes)) throw new Error('Servono ID 1 e 2 corretti, entrambi fermi/disabilitati e senza allarmi. Nessuna scrittura');
-        if(!confirm(`Ripristinare 1022 parametri di ENTRAMBI i driver di ${FPAR.device.name}?\nP994 (calibrazione) e P1012 (seriale) NON saranno scritti.\nSet verificato waz_nodo2.prm: cambia SOLO P1 (1/2). Motori fermi.\nDopo SAVE dovrai spegnere e riaccendere tutto, senza Start, e verificare.`))return;
+        fparReport(`Pre-check OK per ${FPAR.device.name}. Inizio caricamento automatico: 1022 parametri su ciascun driver; P994 (calibrazione) e P1012 (seriale) restano invariati. Il set cambia solo P1 (ID 1/2). Non scollegare.`);
         record={id:FPAR.device.id,name:FPAR.device.name,sha:FPAR_CANONICAL_SHA,saved:[],state:'ripristino in corso',at:Date.now()};
         fparPendingStore(record); // Storage must work BEFORE any write.
         for(const node of [1,2]){
@@ -2784,8 +2803,9 @@ async function fparRestoreBoth(){
         fparReport('Entrambi i SAVE confermati. NON ancora verificata la persistenza.\nSpegni e riaccendi ESP32 e FTD30 (anche USB); non premere Start. Poi spunta la conferma e premi «Verifica dopo riavvio».');
         fparStatus(false,'Attesa verifica dopo riavvio');
     } catch(e){
-        if(record){record.state='PARZIALE / NON CONFERMATO: '+e.message;try{fparPendingStore(record);}catch{}}
-        fparReport('Ripristino NON completato: '+e.message+(record?'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.':'\nNessuna scrittura avviata.'));
+        const partial=!!(e.fparPartial||record?.saved?.length);
+        if(record){record.state=(partial?'PARZIALE / NON CONFERMATO: ':'RIFIUTATO PRIMA DELLA SCRITTURA: ')+e.message;try{fparPendingStore(record);}catch{}}
+        fparReport('Ripristino NON completato: '+e.message+(partial?'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.':'\nNessun parametro scritto e nessun SAVE eseguito.'));
         fparStatus(false,'Ripristino non completato');
     } finally {
         FQ('fparBothBtn').disabled=false;
