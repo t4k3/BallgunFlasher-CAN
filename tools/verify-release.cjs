@@ -12,7 +12,7 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.2.48-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.2.49-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
  assert.equal(meta.shared_firmware.version,'V12.2.48-PDO-FULL');
  assert.equal(meta.shared_firmware.sha256,'e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30');
@@ -26,7 +26,7 @@ function checkImage(b,p){
  assert.deepEqual(usb,meta.internal_usb.files.map(f=>({offset:f.offset,file:f.path,size:f.size,sha256:f.sha256})));
  for(const f of meta.internal_usb.files){
   const b=fs.readFileSync(path.join(root,f.path));assert.equal(b.length,f.size);assert.equal(hash(b),f.sha256);
-  if(f.offset===0x10000)checkImage(b,sodium);
+  if(f.offset===0x10000)checkImage(b,{version:meta.internal_usb.version,size:f.size,sha256:f.sha256});
  }
  const prm=fs.readFileSync(path.join(root,'FTD30/waz_nodo2.prm'));
  assert.equal(hash(prm),'725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2','Canonical FTD30 set changed');

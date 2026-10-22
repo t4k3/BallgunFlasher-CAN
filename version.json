@@ -1,21 +1,21 @@
 {
-  "flasher": "1.5.38",
-  "fleet": "1.0.14",
-  "firmware": "V12.2.48-PDO-FULL",
+  "flasher": "1.5.39",
+  "fleet": "1.0.15",
+  "firmware": "V12.2.49-PDO-FULL",
   "firmware_source": {
     "repository": "t4k3/ballgun_STANDALONE_CANBUS",
     "branch": "codex/ftd30-not-ready-maintenance",
-    "commit": "5a69e8ee903af16a7bb5a1536c5d835764acf270"
+    "commit": "91d191160e1f4bb6c11cf51119c7134654976e2a"
   },
   "internal_ota": {
     "default": "sodium",
     "profiles": {
       "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.48-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.48-PDO-FULL.bin",
-        "size": 918960,
-        "sha256": "e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30"
+        "version": "V12.2.49-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.49-PDO-FULL.bin",
+        "size": 919120,
+        "sha256": "7f50f29fc876909607177e2f717b2c708b00b50d9cb59d77346c3c61cb423f16"
       },
       "lithium": {
         "label": "Litio 36 V · 10S",

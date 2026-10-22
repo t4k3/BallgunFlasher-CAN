@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),asse
 const {test}=require('node:test');
 const html=fs.readFileSync(path.join(__dirname,'../fleet.html'),'utf8');
 const extract=name=>html.match(new RegExp('^(?:async )?function '+name+'\\([^]*?^}', 'm'))[0];
-const target='V12.2.48-PDO-FULL';
+const target='V12.2.49-PDO-FULL';
 async function run(outcomes,initialBusy=false){
  const ids=new Map(),results=[],calls=[],logs=[],states=[];
  const rows=new Map(outcomes.map((_,i)=>[String(i),{device:{id:String(i),name:'wazlley_'+i},
