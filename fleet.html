@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.11</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.12</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -207,8 +207,8 @@
       <button class="modebtn active" data-mode="firmware">Firmware</button>
       <button class="modebtn" data-mode="display">Display</button>
       <button class="modebtn" data-mode="both">Entrambi</button>
-      <button class="modebtn" data-mode="parameters">Parametri (solo nodo 1)</button>
-      <button class="modebtn" data-mode="firmware_parameters" disabled title="La 12.2 PDO non supporta la scrittura parametri">Firmware + parametri (non disponibile con PDO)</button>
+      <button class="modebtn" data-mode="parameters">Parametri (nodi 1 + 2)</button>
+      <button class="modebtn" data-mode="firmware_parameters">Firmware + parametri (nodi 1 + 2)</button>
     </div>
     <div class="bar">
       <button class="primary" id="updateAllBtn" disabled>Aggiorna firmware selezionati</button>
@@ -1305,15 +1305,59 @@ async function loadFleetParameterSet() {
   if (params.length !== 1024 || new Set(params.map(p=>p.index)).size !== 1024 ||
       params.some(p=>p.index>1023 || !Number.isSafeInteger(p.value) || p.value < -2147483648 || p.value > 4294967295) ||
       params.find(p=>p.index===21)?.value !== 0) throw new Error('Set parametri non valido');
-  params.find(p=>p.index===1).value = 1;
   fleetParameterSet = Object.freeze(params.map(p => Object.freeze(p)));
-  log('Set waz_nodo2.prm caricato e verificato: disponibile per tutto il lotto, solo nodo 1.');
+  log('Set waz_nodo2.prm caricato e verificato: disponibile per entrambi i nodi; P1 verrà impostato a 1/2 per il relativo driver.');
   return fleetParameterSet;
 }
 
-// No automatic retry after partial writes; all parameter commands target node 1.
+function fleetPrepareNodeParameters(base, node) {
+  if (node !== 1 && node !== 2) throw new Error(`Nodo ${node} non valido`);
+  const params = base.filter(p=>p.index!==994 && p.index!==1012)
+    .map(p=>({index:p.index,value:p.index===1?node:p.value}));
+  if (params.find(p=>p.index===1)?.value !== node || params.find(p=>p.index===21)?.value !== 0)
+    throw new Error(`Set nodo ${node} non valido`);
+  return params;
+}
+
+async function fleetReadParameter(cmd, node, index) {
+  let r;
+  try { r = await cmd([0xFC,4,node,index&255,index>>8]); }
+  catch (e) { throw new Error(`Nodo ${node} non risponde durante il pre-check (P${index}): ${e.message || e}`); }
+  if (r.length!==8 || r[0]!==0xFC || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7]))
+    throw new Error(`Nodo ${node} non riconosciuto: lettura P${index} fallita (stato=${r[2] ?? '—'}, byte=${r[7] ?? '—'})`);
+  return {value:(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0,width:r[7]};
+}
+
+// Read-only pre-check, completed before the first FC02 write. Both CAN IDs
+// must answer with their own P1, at zero RPM, disabled and without alarms.
+async function fleetPreflightNodes(cmd, deviceName) {
+  const nodes=[];
+  for (const node of [1,2]) {
+    const id=await fleetReadParameter(cmd,node,1);
+    const rpm=await fleetReadParameter(cmd,node,0x1218);
+    const status=await fleetReadParameter(cmd,node,0x4041);
+    const alarm0=await fleetReadParameter(cmd,node,0x1204);
+    const alarm1=await fleetReadParameter(cmd,node,0x1205);
+    nodes.push({node,id,rpm,status,alarm0,alarm1});
+  }
+  for (const n of nodes) {
+    if (n.id.value !== n.node)
+      throw new Error(`Nodo ${n.node} non riconosciuto: P1=${n.id.value}, atteso ${n.node}. Nessun parametro scritto.`);
+    if (n.rpm.value !== 0)
+      throw new Error(`Nodo ${n.node} non fermo: RPM=${n.rpm.value}. Nessun parametro scritto.`);
+    if (![0x21,0x23,0x40].includes(n.status.value & 0x6F))
+      throw new Error(`Nodo ${n.node} non disabilitato: status=0x${n.status.value.toString(16)}. Nessun parametro scritto.`);
+    if (n.alarm0.value !== 0 || n.alarm1.value !== 0)
+      throw new Error(`Nodo ${n.node} in allarme: ${n.alarm0.value}/${n.alarm1.value}. Nessun parametro scritto.`);
+  }
+  log(`${deviceName}: pre-check OK — nodo 1 ID=1 e nodo 2 ID=2 presenti, entrambi fermi/disabilitati e senza allarmi`);
+  return nodes;
+}
+
+// No automatic retry after any parameter write: a disconnect can leave a
+// partial RAM/flash update and requires an explicit diagnostic before retrying.
 async function fleetParametersOne(device, progress) {
-  const params = (await loadFleetParameterSet()).filter(p=>p.index!==994 && p.index!==1012);
+  const baseParameters = await loadFleetParameterSet();
   let chr, waiter = null;
   const notify = ev => {
     const v = new Uint8Array(ev.target.value.buffer, ev.target.value.byteOffset, ev.target.value.byteLength);
@@ -1351,31 +1395,42 @@ async function fleetParametersOne(device, progress) {
     await new Promise(r=>setTimeout(r,1200));
     const cap = await cmd([0xFC,1]);
     if (cap[2]===0xEE) throw new Error('MOTORI ACCESI');
-    if (cap.length===3 && cap[1]===1 && (cap[2]&0x80)) throw new Error('PDO: check in lettura disponibile, scrittura parametri non supportata. Nessun parametro scritto.');
     if (cap.length!==3 || cap[1]!==1 || (cap[2]&3)!==3) throw new Error('Serve V12.1.5: sblocco verificato e lettura SDO corretta. Nessun parametro scritto');
-    log(`${device.name}: parametri solo nodo 1, set waz_nodo2.prm; nodo 2 intatto`);
-    for (let i=0;i<params.length;i+=24) {
-      const chunk=params.slice(i,i+24), pkt=[0xFC,2,1,chunk.length];
-      for(const p of chunk) pkt.push(p.index&255,p.index>>8,p.value&255,(p.value>>8)&255,(p.value>>16)&255,(p.value>>24)&255);
-      const r=await cmd(pkt);
-      if(r.length!==6 || r[1]!==2 || (r[2]|r[3]<<8)!==chunk.length || (r[4]|r[5]<<8)!==0)
-        throw new Error(r[2]===0xE1?'Password 11 non confermata; SAVE non eseguito':'Batch incompleto/rifiutato; SAVE non eseguito');
-      progress(50*(i+chunk.length)/params.length,'Scrittura nodo 1…');
+    progress(0,'Pre-check nodi 1 e 2…');
+    await fleetPreflightNodes(cmd,device.name);
+    const saved=[];
+    for (const node of [1,2]) {
+      const params=fleetPrepareNodeParameters(baseParameters,node);
+      const base=(node-1)*50;
+      log(`${device.name}: nodo ${node} — ${params.length} parametri; P994/P1012 preservati`);
+      for (let i=0;i<params.length;i+=24) {
+        const chunk=params.slice(i,i+24), pkt=[0xFC,2,node,chunk.length];
+        for(const p of chunk) pkt.push(p.index&255,p.index>>8,p.value&255,(p.value>>8)&255,(p.value>>16)&255,(p.value>>24)&255);
+        const r=await cmd(pkt);
+        if(r.length!==6 || r[0]!==0xFC || r[1]!==2 || (r[2]|r[3]<<8)!==chunk.length || (r[4]|r[5]<<8)!==0)
+          throw new Error(r[2]===0xE1?`Nodo ${node}: password 11 non confermata; SAVE non eseguito`:`Nodo ${node}: batch incompleto/rifiutato; SAVE non eseguito`);
+        progress(base+25*(i+chunk.length)/params.length,`Scrittura nodo ${node}…`);
+      }
+      let mismatches=0;
+      for(const p of params) {
+        const r=await cmd([0xFC,4,node,p.index&255,p.index>>8]);
+        if(r.length!==8 || r[0]!==0xFC || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7]))
+          throw new Error(`Nodo ${node} P${p.index}: lettura fallita (stato=${r[2]}, byte=${r[7]}); SAVE non eseguito`);
+        const mask=r[7]===4?0xFFFFFFFF:(2**(8*r[7]))-1;
+        const got=(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0;
+        if(got!==((p.value&mask)>>>0)){mismatches++;log(`${device.name}: nodo ${node} P${p.index} diverso dal set`);}
+        progress(base+25+24*(p.index+1)/1024,`Verifica completa nodo ${node}…`);
+      }
+      if(mismatches) throw new Error(`Nodo ${node}: ${mismatches} discrepanze; SAVE non eseguito, RAM già modificata`);
+      const save=await cmd([0xFC,3,node]);
+      if(save.length!==3 || save[0]!==0xFC || save[1]!==3 || save[2]!==0) throw new Error(`Nodo ${node}: SAVE non confermato`);
+      saved.push(node);
+      progress(base+50,`Nodo ${node} verificato e salvato`);
+      log(`${device.name}: nodo ${node} verifica ${params.length}/${params.length} e SAVE OK`);
     }
-    let mismatches=0;
-    for(const p of params) {
-      const r=await cmd([0xFC,4,1,p.index&255,p.index>>8]);
-      if(r.length!==8 || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7])) throw new Error(`Lettura P${p.index} fallita (stato=${r[2]}, byte=${r[7]}); SAVE non eseguito`);
-      const mask=r[7]===4?0xFFFFFFFF:(2**(8*r[7]))-1;
-      const got=(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0;
-      if(got!==((p.value&mask)>>>0)){mismatches++;log(`${device.name}: P${p.index} diverso dal set`);}
-      progress(50+49*(p.index+1)/1024,'Verifica completa nodo 1…');
-    }
-    if(mismatches) throw new Error(`${mismatches} discrepanze: SAVE non eseguito; RAM già modificata`);
-    const save=await cmd([0xFC,3,1]);
-    if(save.length!==3 || save[1]!==3 || save[2]!==0) throw new Error('SAVE non confermato');
-    progress(100,'Nodo 1 salvato: riavvia FTD30 e verifica persistenza');
-    log(`${device.name}: verifica ${params.length}/${params.length} e SAVE nodo 1 OK; P994/P1012 preservati; nodo 2 intatto. Riavvio e verifica persistenza ancora necessari.`);
+    progress(100,'Nodi 1 e 2 salvati: riavvia FTD30 e verifica persistenza');
+    log(`${device.name}: aggiornamento completo nodi 1+2 concluso; P994/P1012 preservati. Riavvio e verifica persistenza ancora necessari.`);
+    return {saved};
   } finally {
     if(chr)chr.removeEventListener('characteristicvaluechanged',notify);
     if(device.gatt.connected)device.gatt.disconnect();
@@ -1433,10 +1488,6 @@ async function updateSequence(targetRows) {
   const needTft = (fleetMode === 'display'  || fleetMode === 'both');
   if (busy) return;
   if (needFw && !firmwareBytes) return;
-  if (fleetMode === 'firmware_parameters') {
-    $('selMsg').textContent = 'La V12.2.34 PDO supporta il check in lettura, non la scrittura parametri. Seleziona Firmware.';
-    return;
-  }
   if (needTft && !(tftSquare && tftCircle && tftRoundSmall)) {
     $('selMsg').textContent = '⚠ I .tft del display non sono caricati. Ricarica la pagina.';
     return;
@@ -1482,7 +1533,7 @@ async function updateSequence(targetRows) {
         await fleetParametersOne(row.device, (pct,note) => {
           setState(row, 'flashing', note); row.prog.style.width = pct + '%';
         });
-        setState(row, 'done', 'Nodo 1 verificato e salvato; nodo 2 intatto. Riavvia e verifica persistenza.');
+        setState(row, 'done', 'Nodi 1 e 2 verificati e salvati. Riavvia e verifica persistenza.');
       } catch(e) {
         res = {success:false, motors:(e.message || '').includes('MOTORI'), lastErr:e.message || String(e)};
       }
@@ -1508,7 +1559,7 @@ async function updateSequence(targetRows) {
         serial: row.device.name || row.device.id,
         success: true,
         motors: false,
-        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodo 1` : fleetMode === 'firmware' ? `Firmware ${firmwareVersion}` :
+        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodi 1+2` : fleetMode === 'firmware' ? `Firmware ${firmwareVersion}` :
               fleetMode === 'display' ? 'Display' : `Firmware ${firmwareVersion} + display`,
         duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
         message: '',
@@ -1521,7 +1572,7 @@ async function updateSequence(targetRows) {
         serial: row.device.name || row.device.id,
         success: false,
         motors: res.motors,
-        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodo 1` : fleetMode === 'firmware' ? 'Firmware' : fleetMode === 'display' ? 'Display' : 'Firmware + display',
+        mode: needParams ? `${needFw ? `Firmware ${firmwareVersion} + ` : ''}Parametri nodi 1+2` : fleetMode === 'firmware' ? 'Firmware' : fleetMode === 'display' ? 'Display' : 'Firmware + display',
         duration_s: Math.round((nowMs() - sequenceStarted) / 1000),
         message: res.lastErr || 'fallito',
       });
@@ -1560,8 +1611,8 @@ document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', (
   fleetMode = b.dataset.mode;
   document.querySelectorAll('.modebtn').forEach(x => x.classList.toggle('active', x === b));
   $('updateAllBtn').textContent =
-    fleetMode === 'firmware_parameters' ? 'Firmware + parametri non disponibile con PDO' :
-    fleetMode === 'parameters' ? 'Aggiorna parametri nodo 1 selezionati' : fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
+    fleetMode === 'firmware_parameters' ? 'Aggiorna firmware + parametri nodi 1 + 2' :
+    fleetMode === 'parameters' ? 'Aggiorna parametri nodi 1 + 2 selezionati' : fleetMode === 'firmware' ? 'Aggiorna firmware selezionati' :
     fleetMode === 'display'  ? 'Aggiorna display selezionati'  : 'Aggiorna firmware + display selezionati';
   updateEmptyState();
 }));

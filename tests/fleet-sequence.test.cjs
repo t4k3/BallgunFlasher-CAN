@@ -35,8 +35,7 @@ async function run(mode, failure, version = 'V12.2.34-PDO-FULL') {
 
 (async()=>{
   let r = await run('firmware_parameters');
-  assert.deepEqual(r.events,[]);
-  assert.match(r.elements.selMsg.textContent,/non la scrittura parametri/);
+  assert.deepEqual(r.events,['load','firmware','wait:11000','parameters','complete:true','wait:1500']);
   r = await run('firmware');
   assert.deepEqual(r.events,['firmware','complete:true','wait:1500']);
   assert.match(r.results[0].mode,/V12.2.34-PDO-FULL/);
@@ -63,9 +62,8 @@ async function run(mode, failure, version = 'V12.2.34-PDO-FULL') {
     assert.equal(r.results[0].status,'transferred-unverified');
     assert.equal(r.results[0].message,'Readback required');
   }
-  r=await run('firmware_parameters',null,'V12.1.3');
-  assert.equal(r.events.length,0);
-  assert.match(r.elements.selMsg.textContent,/non la scrittura parametri/);
-  assert.match(html, /data-mode="firmware_parameters" disabled/);
-  console.log('Fleet sequence: PDO combo blocked before writes; firmware, failure gates, reboot wait, separate modes passed');
+  r=await run('firmware_parameters','firmware');
+  assert.deepEqual(r.events,['load','firmware','complete:false','wait:1500']);
+  assert.doesNotMatch(html, /data-mode="firmware_parameters" disabled/);
+  console.log('Fleet sequence: firmware + two-node parameters, failure gates, reboot wait and separate modes passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

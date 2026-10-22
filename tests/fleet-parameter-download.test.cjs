@@ -21,7 +21,7 @@ async function run(kind){
   assert.equal(calls,kind==='404'?3:1);
  }else{
   const first=await ctx.loadFleetParameterSet();
-  assert.equal(first.length,1024);assert.equal(first.find(p=>p.index===1).value,1);
+  assert.equal(first.length,1024);assert.equal(first.find(p=>p.index===1).value,2);
   assert(Object.isFrozen(first)&&Object.isFrozen(first[0]));
   const second=await ctx.loadFleetParameterSet();assert.equal(first,second);
   assert.equal(calls,kind==='transient'?2:1,'reuse validated set without another download');
