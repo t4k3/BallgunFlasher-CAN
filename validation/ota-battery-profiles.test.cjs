@@ -14,13 +14,14 @@ const catalog = metadata.internal_ota.profiles;
 function image(key) {
     return Uint8Array.from(fs.readFileSync(path.join(root, catalog[key].path))).buffer;
 }
-function harness({ restored = 'lithium', fetchResult, connectResult = true, connectHook } = {}) {
-    const elements = Object.fromEntries(['otaBatteryProfile', 'otaFile', 'otaFileLabel', 'otaVersion', 'otaProfileInfo', 'otaConnectBtn']
+function harness({ restored = 'lithium', fetchResult, connectResult = true, connectHook,
+                   installedVersion = 'V12.2.34-PDO-FULL' } = {}) {
+    const elements = Object.fromEntries(['otaBatteryProfile', 'otaFile', 'otaFileLabel', 'otaVersion', 'otaProfileInfo', 'otaConnectBtn', 'otaRecoveryBtn']
         .map(id => [id, { value: '', textContent: '', disabled: false, listeners: {}, attributes: {},
             addEventListener(event, fn) { this.listeners[event] = fn; },
             setAttribute(name, value) { this.attributes[name] = value; } }]));
     elements.otaBatteryProfile.value = restored;
-    const state = { events: {}, requests: [], transfers: [], logs: [], connections: 0, disconnects: 0 };
+    const state = { events: {}, requests: [], transfers: [], runOptions: [], logs: [], connections: 0, disconnects: 0 };
     const gatt = { connected: false, disconnect() { this.connected = false; state.disconnects++; } };
     const context = vm.createContext({
         Uint8Array, ArrayBuffer, DataView, TextDecoder, crypto: webcrypto,
@@ -33,7 +34,8 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
             if (connectHook) await connectHook(elements);
             gatt.connected = connectResult; return connectResult;
         },
-        otaRunUpdate: async data => { state.transfers.push(data); },
+        otaReadInstalledVersion: async () => installedVersion,
+        otaRunUpdate: async (data, options = {}) => { state.transfers.push(data); state.runOptions.push(options); },
         otaReleaseConnection: () => { if(gatt.connected) gatt.disconnect(); },
         fetch: async (url, options) => {
             state.requests.push(url); assert.equal(options.cache, 'no-store');
@@ -47,12 +49,13 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
     const select = value => { elements.otaBatteryProfile.value = value; elements.otaBatteryProfile.listeners.change(); };
     const custom = data => elements.otaFile.listeners.change({ target: { files: [{ name: 'selected.bin', arrayBuffer: async () => data }] } });
     return { elements, state, select, custom, click: () => elements.otaConnectBtn.listeners.click(),
+        recover: () => elements.otaRecoveryBtn.listeners.click(),
         load: key => context.otaLoadSelection({ profile: catalog[key] }) };
 }
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
     for(const match of html.matchAll(/flasher-(\d+\.\d+\.\d+)/g)) assert.equal(match[1],metadata.flasher,'All visible build labels must agree');
-    assert.equal(metadata.flasher, '1.5.39');
+    assert.equal(metadata.flasher, '1.5.40');
     assert.equal(metadata.firmware, 'V12.2.49-PDO-FULL');
     assert.equal(metadata.internal_ota.default, 'sodium');
     assert.equal(catalog.sodium.version, 'V12.2.49-PDO-FULL');
@@ -155,4 +158,22 @@ test('selection is captured and controls locked before Bluetooth chooser; duplic
 test('invalid selection makes no connection', async () => {
     const h = harness(); h.select('unknown'); await h.click();
     assert.equal(h.state.connections, 0); assert.equal(h.state.transfers.length, 0);
+});
+test('Recovery requires exact 12.2.34 and always uses verified sodium 12.2.49', async () => {
+    const h = harness();
+    await h.recover();
+    assert.equal(h.state.connections, 1);
+    assert.equal(h.state.transfers.length, 1);
+    assert.deepEqual(new Uint8Array(h.state.transfers[0]), new Uint8Array(image('sodium')));
+    assert.equal(h.state.runOptions[0].recovery34, true);
+    assert.ok(h.state.logs.some(line => line.includes('V12.2.34-PDO-FULL') && line.includes('V12.2.49-PDO-FULL')));
+});
+test('Recovery rejects every source version except exact 12.2.34 before FE05', async () => {
+    for (const installedVersion of ['V12.2.33-PDO-FULL', 'V12.2.35-PDO-FULL', 'V12.2.34-LI10S-PDO-FULL', '']) {
+        const h = harness({ installedVersion });
+        await h.recover();
+        assert.equal(h.state.transfers.length, 0);
+        assert.equal(h.state.disconnects, 1);
+        assert.ok(h.state.logs.some(line => line.includes('Recovery consentita solo')));
+    }
 });

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.39</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.40</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.39</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.40</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -273,6 +273,8 @@
             </select>
             <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.49-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
+            <button class="btn-connect" id="otaRecoveryBtn">Recovery V12.2.34 → V12.2.49</button>
+            <div class="chip-info">Recovery: spegni 10 secondi, riaccendi, non premere START, poi usa il pulsante dedicato. Nessun comando START/STOP viene inviato.</div>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
             <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
@@ -357,7 +359,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.39 · OTA interno V12.2.49-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.40 · OTA interno V12.2.49-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1391,7 +1393,8 @@ function otaCrc16(bytes) {
 }
 
 function otaOnNotify(ev) {
-    const v = new Uint8Array(ev.target.value.buffer);
+    const view = ev.target.value;
+    const v = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
     // PROGRESS notification (FE 10 …, 12 bytes) — informational, do not resolve.
     if (v.length === 12 && v[0] === 0xFE && v[1] === 0x10) return;
     if (ota.waiter) { const w = ota.waiter; ota.waiter = null; w(v); }
@@ -1485,6 +1488,41 @@ async function otaConnect() {
     }
 }
 
+// Read-only AA13 proof on the SAME BLE connection selected for recovery.
+// The exact source version is required before any FE05 command is sent.
+async function otaReadInstalledVersion() {
+    if (!ota.char || !ota.device?.gatt?.connected) throw new Error('Connessione BLE non valida');
+    const token = crypto.getRandomValues(new Uint16Array(1))[0];
+    const bytes = [];
+    let total = null;
+    while (total === null || bytes.length < total) {
+        const offset = bytes.length;
+        const pending = otaWaitNotify(3000);
+        pending.catch(() => {});
+        try {
+            await otaWrite([0xAA, 0x13, token >> 8, token & 0xFF, offset], true);
+        } catch (error) {
+            ota.cancelWait?.();
+            await pending.catch(() => {});
+            throw error;
+        }
+        const reply = await pending;
+        if (reply.length === 3 && reply[0] === 0xAA && reply[1] === 0x13)
+            throw new Error('La lettura versione AA13 non è supportata');
+        const remaining = total === null ? null : total - offset;
+        if (reply.length < 8 || reply[0] !== 0xAA || reply[1] !== 0x13 || reply[2] !== 1 ||
+            reply[3] !== (token >> 8) || reply[4] !== (token & 0xFF) ||
+            reply[5] < 1 || reply[5] > 64 || reply[6] !== offset ||
+            (total !== null && reply[5] !== total) ||
+            reply.length !== 7 + Math.min(13, remaining === null ? reply[5] : remaining) ||
+            reply.slice(7).some(byte => byte < 33 || byte > 126))
+            throw new Error('Risposta versione AA13 non valida');
+        total = reply[5];
+        bytes.push(...reply.slice(7));
+    }
+    return new TextDecoder().decode(Uint8Array.from(bytes));
+}
+
 // Build the packet list for one sector, guaranteeing no packet is exactly
 // 20 bytes (a 20-byte packet would be misread by the firmware as a command).
 function otaBuildSectorPackets(sectorIndex, data) {
@@ -1515,7 +1553,73 @@ function otaBuildSectorPackets(sectorIndex, data) {
     return pkts;
 }
 
-async function otaRunUpdate(binData) {
+function otaIsMotorRunningReply(reply) {
+    return reply?.length >= 3 && reply[0] === 0xFE && reply[1] === 0xE0 && reply[2] === 0x09;
+}
+
+async function otaEnterUpdateMode(recovery34) {
+    if (recovery34) {
+        const deadline = Date.now() + 30000;
+        let attempt = 0;
+        while (Date.now() < deadline && attempt < 30) {
+            if (!ota.device?.gatt?.connected) throw new Error('BLE disconnesso durante Recovery');
+            attempt++;
+            let reply = null;
+            const pending = otaWaitNotify(1500);
+            pending.catch(() => {});
+            try {
+                await otaWrite([0xFE, 0x05], true);
+            } catch (error) {
+                ota.cancelWait?.();
+                await pending.catch(() => {});
+                throw error;
+            }
+            try { reply = await pending; }
+            catch (_) { log(`Recovery: nessuna risposta (${attempt})`, 'OTA'); }
+            if (reply?.length >= 3 && reply[0] === 0xFE && reply[1] === 0x05) return reply;
+            if (reply && !otaIsMotorRunningReply(reply)) throw new Error('Recovery rifiutata con risposta non valida');
+            log(`Recovery 12.2.34: attesa consenso firmware (${attempt})…`, 'OTA');
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        throw new Error('La V12.2.34 continua a rifiutare l’OTA. Nessun byte firmware è stato inviato.');
+    }
+
+    // Normal updater: retain the established STOP-assisted sequence.
+    let reply = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const pending = otaWaitNotify(7000);
+        pending.catch(() => {});
+        await otaWrite([0xFE, 0x05], true);
+        try { reply = await pending; break; }
+        catch (_) {
+            log(`ENTER OTA: no reply (attempt ${attempt}/3)`, 'OTA');
+            if (attempt === 3) throw new Error('device not responding to ENTER OTA — move closer / power-cycle and retry');
+        }
+    }
+    if (otaIsMotorRunningReply(reply)) {
+        log('Il firmware richiede STOP: invio arresto e riprovo automaticamente…', 'OTA');
+        const stopPending = otaWaitNotify(5000);
+        stopPending.catch(() => {});
+        await otaWrite([0xAA, 0x03], true);
+        const stopReply = await stopPending;
+        if (!(stopReply.length >= 3 && stopReply[0] === 0xAA && stopReply[1] === 0x03 && stopReply[2] === 0x00))
+            throw new Error('STOP non confermato dal firmware: aggiornamento non avviato');
+        for (let settle = 1; settle <= 8; settle++) {
+            await new Promise(resolve => setTimeout(resolve, 750));
+            const retryPending = otaWaitNotify(7000);
+            retryPending.catch(() => {});
+            await otaWrite([0xFE, 0x05], true);
+            reply = await retryPending;
+            if (!otaIsMotorRunningReply(reply)) break;
+            log(`Attesa arresto driver (${settle}/8)…`, 'OTA');
+        }
+        if (otaIsMotorRunningReply(reply))
+            throw new Error('Blocco OTA persistente: se la macchina ha V12.2.34 usa il pulsante Recovery dedicato');
+    }
+    return reply;
+}
+
+async function otaRunUpdate(binData, options = {}) {
     const cbtn = document.getElementById('otaConnectBtn');
     cbtn.disabled = true;
     try {
@@ -1523,43 +1627,9 @@ async function otaRunUpdate(binData) {
         if (!fw.length) throw new Error('empty firmware');
         log(`firmware: ${(fw.length / 1024).toFixed(1)} KB`, 'OTA');
 
-        // 1) ENTER OTA MODE (FE 05) — with retry. Android may still drop the
-        // first ack notification; retry a few times with a generous timeout.
-        let r = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            const p = otaWaitNotify(7000);
-            p.catch(() => {}); // observe timeout even if the write rejects first
-            await otaWrite([0xFE, 0x05], true);
-            try { r = await p; break; }
-            catch (e) {
-                log(`ENTER OTA: no reply (attempt ${attempt}/3)`, 'OTA');
-                if (attempt === 3) throw new Error('device not responding to ENTER OTA — move closer / power-cycle and retry');
-            }
-        }
-        // Older releases can report FE E0 09 even with zero RPM while their
-        // internal STOP/state proof is still settling. Ask the existing motor
-        // protocol for a real STOP, wait for its ACK, then let the firmware
-        // re-evaluate its own safety gate. Never stream bytes after a refusal.
-        if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09) {
-            log('Il firmware richiede STOP: invio arresto e riprovo automaticamente…', 'OTA');
-            const stopP = otaWaitNotify(5000);
-            stopP.catch(() => {});
-            await otaWrite([0xAA, 0x03], true);
-            const stopR = await stopP;
-            if (!(stopR.length >= 3 && stopR[0] === 0xAA && stopR[1] === 0x03 && stopR[2] === 0x00))
-                throw new Error('STOP non confermato dal firmware: aggiornamento non avviato');
-            for (let settle = 1; settle <= 8; settle++) {
-                await new Promise(resolve => setTimeout(resolve, 750));
-                const retryP = otaWaitNotify(7000);
-                retryP.catch(() => {});
-                await otaWrite([0xFE, 0x05], true);
-                r = await retryP;
-                if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)) break;
-                log(`Attesa arresto driver (${settle}/8)…`, 'OTA');
-            }
-            if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)
-                throw new Error('STOP confermato ma il vecchio firmware mantiene il blocco OTA; installa V12.2.48 una volta via USB');
-        }
+        // 1) ENTER OTA MODE. Recovery never sends motor START/STOP and is
+        // available only after exact AA13 proof of V12.2.34-PDO-FULL.
+        let r = await otaEnterUpdateMode(options.recovery34 === true);
         if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0x05)) throw new Error('no OTA-mode ack');
         log('device in OTA mode', 'OTA');
 
@@ -1688,6 +1758,7 @@ function otaResetProfile() {
 }
 function otaLockProfile(busy) {
     document.getElementById('otaConnectBtn').disabled = busy;
+    document.getElementById('otaRecoveryBtn').disabled = busy;
     otaProfileSelect.disabled = busy;
     otaFileInput.disabled = busy;
     otaFileLabel.setAttribute('aria-disabled', String(busy));
@@ -1770,6 +1841,36 @@ document.getElementById('otaConnectBtn').addEventListener('click', async () => {
     } finally {
         // Transfers own their bounded reboot wait and cleanup. Preparation
         // failures never enter OTA and can release the connection immediately.
+        if (!transferStarted) otaReleaseConnection();
+        otaProfileBusy = false;
+        otaLockProfile(false);
+    }
+});
+
+document.getElementById('otaRecoveryBtn').addEventListener('click', async () => {
+    if (otaProfileBusy) return;
+    otaProfileBusy = true;
+    otaLockProfile(true);
+    let transferStarted = false;
+    try {
+        const connected = await otaConnect();
+        if (!connected) return;
+        const installed = await otaReadInstalledVersion();
+        log(`Recovery: firmware installato ${installed}`, 'OTA');
+        if (installed !== 'V12.2.34-PDO-FULL')
+            throw new Error(`Recovery consentita solo da V12.2.34-PDO-FULL; rilevato ${installed}`);
+        const profile = OTA_BATTERY_PROFILES.sodium;
+        log(`Preparazione Recovery ${installed} → ${profile.version}`, 'OTA');
+        const image = await otaLoadSelection({ profile });
+        if (image.version !== 'V12.2.49-PDO-FULL')
+            throw new Error('Target Recovery diverso da V12.2.49-PDO-FULL');
+        document.getElementById('otaVersion').textContent = image.version;
+        log(`Recovery · ${image.version} · ${image.data.byteLength} bytes · verificato`, 'OTA');
+        transferStarted = true;
+        await otaRunUpdate(image.data, { recovery34: true });
+    } catch (error) {
+        log(`${transferStarted ? 'Recovery fallita' : 'Recovery non avviata'}: ${error.message || error}`, 'OTA');
+    } finally {
         if (!transferStarted) otaReleaseConnection();
         otaProfileBusy = false;
         otaLockProfile(false);

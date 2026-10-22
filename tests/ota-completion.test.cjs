@@ -1,6 +1,7 @@
 // Execute the actual web OTA functions, packet builders, notification parser
 // and timers. Only DOM and Bluetooth are simulated; no hardware/network writes.
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const { webcrypto } = require('node:crypto');
 const assert = require('node:assert/strict');
 const immediate = () => new Promise(resolve => setImmediate(resolve));
 const unhandled = [];
@@ -24,7 +25,7 @@ async function run(page, scenario) {
   const button = {};
   const firmware = new Uint8Array(4097).fill(0xa5);
   const ctx = {
-    Uint8Array, Date, console, AbortController,
+    Uint8Array, Uint16Array, TextDecoder, Date, console, AbortController, crypto:webcrypto,
     OTA_PKT_PAYLOAD:180, OTA_SECTOR_SIZE:4096, OTA_MAX_RETRIES:5, OTA_ACK_TIMEOUT:3000,
     ENTER_RETRIES:3, ENTER_TIMEOUT:7000, OTA_SERVICE_UUID:'service', OTA_CHAR_UUID:'char', IS_ANDROID:false,
     firmwareBytes:firmware,
@@ -49,13 +50,18 @@ async function run(page, scenario) {
   const remoteDisconnect = () => { remoteDisconnects++; disconnect(); };
   const write = async (bytes, response) => {
     if (response) {
-      if (bytes.length===2 && bytes[0]===0xAA && bytes[1]===0x03) {
+      if (bytes.length===5 && bytes[0]===0xAA && bytes[1]===0x13) {
+        const version='V12.2.34-PDO-FULL', offset=bytes[4], chunk=[...Buffer.from(version)].slice(offset,offset+13);
+        notify([0xaa,0x13,1,bytes[2],bytes[3],version.length,offset,...chunk]);
+      } else if (bytes.length===2 && bytes[0]===0xAA && bytes[1]===0x03) {
         stopWrites++;
         notify([0xaa,3,scenario==='stopAckFail'?0xff:0]);
       } else if (bytes.length===2) {
         enterWrites++;
         if(scenario==='enterWriteFail') throw Error('ENTER write failed');
-        if(scenario==='motorRunningStuck' || ((scenario==='motorRunningThenStop'||scenario==='stopAckFail') && enterWrites===1))
+        if(scenario==='motorRunningStuck' || scenario==='recoveryGateStuck' ||
+           (scenario==='recoveryGateThenSuccess' && enterWrites<3) ||
+           ((scenario==='motorRunningThenStop'||scenario==='stopAckFail') && enterWrites===1))
           notify([0xfe,0xe0,9]);
         else notify([0xfe,5,0]);
       } else {
@@ -128,7 +134,8 @@ async function run(page, scenario) {
   ctx.ota={char:null,device:null,server:null,waiter:null,cancelWait:null,disconnectListener:null};
   vm.createContext(ctx);
   const names=['otaCrc16','otaBuildSectorPackets',...(fleet?['otaUpdateOne']:
-    ['otaOnNotify','otaWaitNotify','otaWrite','otaReleaseConnection','otaWaitForReboot','otaConnect','otaRunUpdate'])];
+    ['otaOnNotify','otaWaitNotify','otaWrite','otaReleaseConnection','otaWaitForReboot','otaConnect',
+     'otaReadInstalledVersion','otaIsMotorRunningReply','otaEnterUpdateMode','otaRunUpdate'])];
   vm.runInContext(names.map(extract).join('\n'),ctx);
   const assertReleased = () => {
     assert.equal(device.gatt.connected,false,`${page}: GATT still connected`);
@@ -139,7 +146,9 @@ async function run(page, scenario) {
   };
   const single = async () => {
     if(!await ctx.otaConnect()) throw Error('connect failed');
-    const result=await ctx.otaRunUpdate(firmware);
+    const recovery=scenario.startsWith('recovery');
+    if(recovery) assert.equal(await ctx.otaReadInstalledVersion(),'V12.2.34-PDO-FULL');
+    const result=await ctx.otaRunUpdate(firmware,{recovery34:recovery});
     assertReleased();
     return result;
   };
@@ -232,6 +241,15 @@ async function run(page, scenario) {
         assert.equal(r.cleanupDisconnects,scenario==='repeatSuccess'?2:0);
         assert.deepEqual(r.sectors,scenario==='repeatSuccess'?[0,1,0,1]:[0,1]);
       }
+      const recovery=await run(page,'recoveryGateThenSuccess');cases++;
+      assert(recovery.success,'Recovery should transfer after the old gate opens');
+      assert.equal(recovery.stopWrites,0,'Recovery must never send STOP');
+      assert.equal(recovery.enterWrites,3,'Recovery retries only FE05');
+      const stuck=await run(page,'recoveryGateStuck');cases++;
+      assert.equal(stuck.success,false);
+      assert.equal(stuck.stopWrites,0,'Rejected Recovery must never send STOP');
+      assert.equal(stuck.sectors.length,0,'Rejected Recovery must not stream firmware');
+      assert(stuck.enterWrites > 1 && stuck.enterWrites <= 30,'Recovery retry bound');
     }
   }
   assert.equal(unhandled.length,0,`unhandled rejection: ${unhandled}`);
