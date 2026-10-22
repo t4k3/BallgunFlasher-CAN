@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.35</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.36</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.35</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.36</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -315,24 +315,38 @@
             <div class="chip-info" id="nbleInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
         </div>
 
-        <!-- FTD30 PARAMETRI (CAN, via BLE 0xFC) -->
+        <!-- FTD30 CARICA PARAMETRI (CAN, via BLE 0xFC) -->
         <div class="device-panel ftd30">
             <h2>
                 <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4 M12 19v4 M1 12h4 M19 12h4" stroke="currentColor" stroke-width="2"/></svg>
-                FTD30 PARAMETRI <span class="sub">CAN · via BLE</span>
+                CARICA PARAMETRI FTD30 <span class="sub">CAN · via BLE</span>
             </h2>
             <div class="status">
-                <div class="status-dot" id="fparStatusDot"></div>
-                <span id="fparStatusText">Disconnected</span>
+                <div class="status-dot" id="fparWriteStatusDot"></div>
+                <span id="fparWriteStatusText">Pronto</span>
             </div>
-            <button class="btn-connect" id="fparCheckBtn">Check completo · entrambi i nodi (sola lettura)</button>
-            <button class="btn-connect" id="fparBothBtn" hidden>Aggiorna parametri · entrambi i nodi</button>
+            <button class="btn-update ota" id="fparBothBtn">Carica parametri corretti · nodi 1 + 2</button>
             <div id="fparVerifyPanel" hidden>
                 <label><input type="checkbox" id="fparRebootConfirmed"> Ho spento e riacceso ESP32 e driver, senza Start</label>
                 <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
             </div>
+            <div class="progress" id="fparWriteProgress"><div class="progress-bar nextion" id="fparWriteProgressBar"></div></div>
+            <div class="chip-info" id="fparWriteInfo">Azione diretta: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive e salva il set corretto. P994 e P1012 restano invariati.</div>
+        </div>
+
+        <!-- FTD30 CONTROLLO PARAMETRI (sola lettura) -->
+        <div class="device-panel ftd30">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l5 5" stroke="currentColor" stroke-width="2"/></svg>
+                CONTROLLO PARAMETRI FTD30 <span class="sub">sola lettura</span>
+            </h2>
+            <div class="status">
+                <div class="status-dot" id="fparStatusDot"></div>
+                <span id="fparStatusText">Non eseguito</span>
+            </div>
+            <button class="btn-connect" id="fparCheckBtn">Confronta tutti i parametri · lento</button>
             <div class="progress" id="fparProgress"><div class="progress-bar nextion" id="fparProgressBar"></div></div>
-            <div class="chip-info" id="fparInfo">Prima controlla entrambi i nodi senza scrivere. Se ci sono differenze puoi aggiornare i 1022 parametri consentiti su nodo 1 e nodo 2. P994 e P1012 restano invariati. Motori fermi, Home/Stop, driver alimentati e nessun allarme.</div>
+            <div class="chip-info" id="fparInfo">Diagnostica separata: legge e confronta 1022 parametri per ciascun nodo senza unlock, scritture o SAVE. Non è necessaria prima del caricamento.</div>
         </div>
     </div>
 
@@ -343,7 +357,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.35 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.36 · OTA interno V12.2.34-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2239,15 +2253,17 @@ document.getElementById('nbleConnectBtn').addEventListener('click', async () => 
 // e salva (bit8 di 0x3000). Funziona via BLE su qualsiasi macchina.
 // =====================================================================
 const FQ = id => document.getElementById(id);
-const FPAR = { device:null, server:null, char:null, waiter:null, set:null, busy:false };
+const FPAR = { device:null, server:null, char:null, waiter:null, set:null, busy:false, ui:'check' };
 const FPAR_BATCH = 24;   // parametri per pacchetto BLE (24*6+4 = 148 byte)
 
 function fparStatus(connected, text){
-    const d = FQ('fparStatusDot'); if (d) d.className = 'status-dot' + (connected ? ' connected' : '');
-    const t = FQ('fparStatusText'); if (t) t.textContent = text;
+    const prefix=FPAR.ui==='write'?'fparWrite':'fpar';
+    const d = FQ(prefix+'StatusDot'); if (d) d.className = 'status-dot' + (connected ? ' connected' : '');
+    const t = FQ(prefix+'StatusText'); if (t) t.textContent = text;
 }
 function fparProgress(pct){
-    const p = FQ('fparProgress'), b = FQ('fparProgressBar');
+    const prefix=FPAR.ui==='write'?'fparWrite':'fpar';
+    const p = FQ(prefix+'Progress'), b = FQ(prefix+'ProgressBar');
     if (p) p.style.display = 'block';
     if (b) b.style.width = Math.round(pct) + '%';
 }
@@ -2694,7 +2710,7 @@ async function fparSnapshot(){
 }
 function fparSafeNodes(nodes){
     return nodes.length===2 && nodes.every(n=>fparSame(n.id,n.node) && !n.rpm.error && n.rpm.value===0 &&
-        !n.status.error && [0x21,0x23,0x40].includes(n.status.value&0x6F) &&
+        !n.status.error && [0x00,0x21,0x23,0x40].includes(n.status.value&0x6F) &&
         !n.alarm0.error && n.alarm0.value===0 && !n.alarm1.error && n.alarm1.value===0);
 }
 function fparSummary(nodes,esp){
@@ -2714,10 +2730,9 @@ function fparSummary(nodes,esp){
 }
 async function fparCompleteCheck(){
     if(FPAR.busy)return;
+    FPAR.ui='check';
     FPAR.busy=true;
     FQ('fparCheckBtn').disabled=true;
-    FQ('fparBothBtn').hidden=true;
-    FPAR.checkedDeviceId=null;
     try {
         fparStatus(false,'Check in corso · dettagli in console');
         fparProgress(0);
@@ -2731,28 +2746,23 @@ async function fparCompleteCheck(){
             fparReport(fparSummary(nodes,esp));
         }
         const ok=nodes.every(n=>n.compare && n.compare.matched===n.compare.total) && fparSafeNodes(nodes);
-        const repairable=fparSafeNodes(nodes) && nodes.every(n=>n.compare && n.compare.unread.length===0)
-            && nodes.some(n=>n.compare.differences.length>0);
-        if(repairable){FPAR.checkedDeviceId=FPAR.device.id;FQ('fparBothBtn').hidden=false;}
         if(!ok)fparInvalidateVerification('Check con anomalie: verifica precedente non più confermata');
         fparStatus(ok,ok?'Check parametri e stato OK · dettagli in console':'Check con differenze o anomalie · dettagli in console');
     } catch(e){
         try{fparInvalidateVerification('Check interrotto: verifica precedente non più confermata');}catch{}
-        FPAR.checkedDeviceId=null;FQ('fparBothBtn').hidden=true;
         fparReport('Check NON completato: '+e.message); fparStatus(false,'Check non completato');
     }
     finally { FPAR.busy=false;FQ('fparCheckBtn').disabled=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
 }
 async function fparRestoreBoth(){
     if(FPAR.busy)return;
-    if(!FPAR.checkedDeviceId){fparReport('Esegui prima il Check completo: aggiornamento disponibile solo dopo un confronto completo con differenze.');return;}
+    FPAR.ui='write';
     FPAR.busy=true; let record;
     FQ('fparBothBtn').disabled=true;
     FQ('fparRebootConfirmed').checked=false;
     FQ('fparRebootConfirmed').disabled=true;
     try {
         if(!FPAR.char)await fparConnect();
-        if(FPAR.device.id!==FPAR.checkedDeviceId)throw new Error('Macchina diversa da quella controllata: ripetere il Check completo. Nessuna scrittura');
         const set=await fparCanonical();
         const cap=await fparCmd([0xFC,1],5000);
         if(cap.length!==3||cap[0]!==0xFC||cap[1]!==1||cap[2]===0xEE||(cap[2]&3)!==3)
@@ -2778,13 +2788,14 @@ async function fparRestoreBoth(){
         fparReport('Ripristino NON completato: '+e.message+(record?'\nPossibili modifiche parziali in RAM/flash. Non avviare i motori.':'\nNessuna scrittura avviata.'));
         fparStatus(false,'Ripristino non completato');
     } finally {
-        FPAR.checkedDeviceId=null;FQ('fparBothBtn').hidden=true;FQ('fparBothBtn').disabled=false;
+        FQ('fparBothBtn').disabled=false;
         FQ('fparRebootConfirmed').checked=false;FQ('fparRebootConfirmed').disabled=false;
         FPAR.busy=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();
     }
 }
 async function fparVerifyReboot(){
     if(FPAR.busy)return;
+    FPAR.ui='write';
     if(!FQ('fparRebootConfirmed').checked){fparReport('Prima spegni e riaccendi ESP32 e FTD30, senza Start, poi conferma la casella.');return;}
     FPAR.busy=true;
     let record;
@@ -2795,7 +2806,7 @@ async function fparVerifyReboot(){
         const selected=fparPendingRecords()[FPAR.device.id];
         record=selected;
         if(!record || record.sha!==FPAR_CANONICAL_SHA || record.saved.length!==2 || ![1,2].every(n=>record.saved.includes(n)))
-            throw new Error('Nessun ripristino completo in attesa per QUESTA macchina/browser. Usa Check completo o ripeti il ripristino');
+            throw new Error('Nessun ripristino completo in attesa per QUESTA macchina/browser. Ripeti il ripristino');
         record.state='verifica dopo riavvio in corso';delete record.verifiedAt;fparPendingStore(record);
         const set=await fparCanonical(),nodes=await fparSnapshot();
         if(!fparSafeNodes(nodes))throw new Error('Nodi non pronti, ID errati, allarmi o motori non fermi');
