@@ -20,6 +20,7 @@ async function run(page, scenario) {
   let watchSignal;
   const timers = new Map(), listeners = new Map(), deviceListeners = new Map();
   const logs = [], progress = [], sectors = [], counts = new Map();
+  let enterWrites = 0, stopWrites = 0;
   const button = {};
   const firmware = new Uint8Array(4097).fill(0xa5);
   const ctx = {
@@ -48,9 +49,15 @@ async function run(page, scenario) {
   const remoteDisconnect = () => { remoteDisconnects++; disconnect(); };
   const write = async (bytes, response) => {
     if (response) {
-      if (bytes.length===2) {
+      if (bytes.length===2 && bytes[0]===0xAA && bytes[1]===0x03) {
+        stopWrites++;
+        notify([0xaa,3,scenario==='stopAckFail'?0xff:0]);
+      } else if (bytes.length===2) {
+        enterWrites++;
         if(scenario==='enterWriteFail') throw Error('ENTER write failed');
-        notify([0xfe,5,0]);
+        if(scenario==='motorRunningStuck' || ((scenario==='motorRunningThenStop'||scenario==='stopAckFail') && enterWrites===1))
+          notify([0xfe,0xe0,9]);
+        else notify([0xfe,5,0]);
       } else {
         if(scenario==='startWriteFail') throw Error('START write failed');
         const reply=new Uint8Array(20);reply[1]=3;notify(reply);
@@ -173,14 +180,15 @@ async function run(page, scenario) {
   if(watchSignal) assert.equal(watchSignal.aborted,true,'advertisement watch not aborted');
   assert(!logs.some(s=>s.includes('OTA COMPLETE')),'transfer presented as installed');
   if(success) assert(!logs.some(s=>s.includes('OTA FAILED')),'cleanup falsely reported transfer failure');
-  return {success,sectors,progress,failure,logs,result,cleanupDisconnects,remoteDisconnects,finalAckAt,cleanupAt,finishedAt};
+  return {success,sectors,progress,failure,logs,result,cleanupDisconnects,remoteDisconnects,finalAckAt,cleanupAt,finishedAt,enterWrites,stopWrites};
 }
 
 (async()=>{
   let cases=0;
   for(const page of ['index.html','fleet.html']) {
     for(const scenario of ['timeout','writeFail','writeFailAck','disconnect','nack','crcWrong','indexWrong',
-      'shortAck','longAck','resyncLoop','resyncSame','resyncOutOfRange','enterWriteFail','startWriteFail']) {
+      'shortAck','longAck','resyncLoop','resyncSame','resyncOutOfRange','enterWriteFail','startWriteFail',
+      'motorRunningStuck','stopAckFail']) {
       const r=await run(page,scenario);
       assert.equal(r.success,false,`${page}: ${scenario} falsely succeeded`);
       assert(r.failure,`${page}: ${scenario} swallowed failure`);
@@ -190,7 +198,8 @@ async function run(page, scenario) {
       cases++;
     }
     for(const [scenario,expected] of [['success',[0,1]],['retryThenSuccess',[0,1,1]],
-      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]],['disconnectAfterAck',[0,1]]]) {
+      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]],['disconnectAfterAck',[0,1]],
+      ['motorRunningThenStop',[0,1]]]) {
       const r=await run(page,scenario);
       assert(r.success,`${page}: ${scenario} failed`);
       assert.deepEqual(r.sectors,expected,`${page}: wrong resync target/increment`);
@@ -201,6 +210,10 @@ async function run(page, scenario) {
       assert.equal(r.cleanupDisconnects,scenario==='disconnectAfterAck'?0:1);
       assert.equal(r.finishedAt-r.finalAckAt,scenario==='disconnectAfterAck'?10:8000,
         'preserve reboot grace, bounded at 8 seconds');
+      if(scenario==='motorRunningThenStop') {
+        assert.equal(r.stopWrites,1,'send exactly one STOP before retrying ENTER OTA');
+        assert.equal(r.enterWrites,2,'retry ENTER OTA only after STOP acknowledgement');
+      }
     }
     if(page==='fleet.html') {
       for(const scenario of ['connectFail','serviceFail','notificationFail','advertReject','advertEarly','advertTimeout']) {

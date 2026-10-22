@@ -1,6 +1,6 @@
 {
-  "flasher": "1.5.37",
-  "fleet": "1.0.13",
+  "flasher": "1.5.38",
+  "fleet": "1.0.14",
   "firmware": "V12.2.48-PDO-FULL",
   "firmware_source": {
     "repository": "t4k3/ballgun_STANDALONE_CANBUS",

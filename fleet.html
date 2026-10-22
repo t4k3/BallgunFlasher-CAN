@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.13</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.14</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -553,8 +553,21 @@ async function otaUpdateOne(device, onProgress) {
       try { r = await p; break; }
       catch (e) { if (a === ENTER_RETRIES) throw new Error('nessuna risposta a ENTER OTA'); }
     }
-    if (r.length >= 3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)
-      throw new Error('MOTORI ACCESI — ferma i motori');
+    if (r.length >= 3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09) {
+      const stopP=waitNotify(5000);stopP.catch(()=>{});
+      await write([0xAA,0x03],true);
+      const stopR=await stopP;
+      if (!(stopR.length>=3 && stopR[0]===0xAA && stopR[1]===0x03 && stopR[2]===0))
+        throw new Error('STOP non confermato: firmware non aggiornato');
+      for(let settle=1;settle<=8;settle++){
+        await new Promise(resolve=>setTimeout(resolve,750));
+        const retryP=waitNotify(ENTER_TIMEOUT);retryP.catch(()=>{});
+        await write([0xFE,0x05],true);r=await retryP;
+        if (!(r.length>=3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)) break;
+      }
+      if (r.length>=3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)
+        throw new Error('STOP confermato ma blocco OTA persistente: installare V12.2.48 una volta via USB');
+    }
     if (!(r.length >= 3 && r[0]===0xFE && r[1]===0x05)) throw new Error('ENTER OTA: ACK errato');
 
     // --- 2) START (20 byte) ---

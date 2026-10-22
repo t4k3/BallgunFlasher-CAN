@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.37</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.38</title>
 <style>
     :root {
         color-scheme: dark;
@@ -147,7 +147,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.37</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.38</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -357,7 +357,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.37 · OTA interno V12.2.48-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.38 · OTA interno V12.2.48-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -1536,10 +1536,30 @@ async function otaRunUpdate(binData) {
                 if (attempt === 3) throw new Error('device not responding to ENTER OTA — move closer / power-cycle and retry');
             }
         }
-        // V20.6.0+: firmware rejects OTA while motors are enabled or still
-        // spinning, replying FE E0 09 (BLE_ERR_MOTORS_RUNNING) instead of FE 05 00.
-        if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)
-            throw new Error('Motors running — stop the motors before updating');
+        // Older releases can report FE E0 09 even with zero RPM while their
+        // internal STOP/state proof is still settling. Ask the existing motor
+        // protocol for a real STOP, wait for its ACK, then let the firmware
+        // re-evaluate its own safety gate. Never stream bytes after a refusal.
+        if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09) {
+            log('Il firmware richiede STOP: invio arresto e riprovo automaticamente…', 'OTA');
+            const stopP = otaWaitNotify(5000);
+            stopP.catch(() => {});
+            await otaWrite([0xAA, 0x03], true);
+            const stopR = await stopP;
+            if (!(stopR.length >= 3 && stopR[0] === 0xAA && stopR[1] === 0x03 && stopR[2] === 0x00))
+                throw new Error('STOP non confermato dal firmware: aggiornamento non avviato');
+            for (let settle = 1; settle <= 8; settle++) {
+                await new Promise(resolve => setTimeout(resolve, 750));
+                const retryP = otaWaitNotify(7000);
+                retryP.catch(() => {});
+                await otaWrite([0xFE, 0x05], true);
+                r = await retryP;
+                if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)) break;
+                log(`Attesa arresto driver (${settle}/8)…`, 'OTA');
+            }
+            if (r.length >= 3 && r[0] === 0xFE && r[1] === 0xE0 && r[2] === 0x09)
+                throw new Error('STOP confermato ma il vecchio firmware mantiene il blocco OTA; installa V12.2.48 una volta via USB');
+        }
         if (!(r.length >= 3 && r[0] === 0xFE && r[1] === 0x05)) throw new Error('no OTA-mode ack');
         log('device in OTA mode', 'OTA');
 
