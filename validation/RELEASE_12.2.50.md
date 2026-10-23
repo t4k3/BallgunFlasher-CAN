@@ -7,9 +7,9 @@
 - Dedicated recovery remains independently pinned to
   `V12.2.34-PDO-FULL → V12.2.49-PDO-FULL`, using the existing `.49` image and
   hash. It never follows the normal sodium target automatically.
-- Internal USB remains on its existing isolated `.48` bundle; it is outside
-  this normal OTA-only release.
+- Internal USB was subsequently promoted to the complete `.50` four-file
+  bundle in Flasher 1.5.43.
 
-The `.50` firmware changes only `version.txt` from `.49`. Local build and host
-tests do not prove a physical `.49 → .50` BLE update and do not constitute a
-publication.
+The `.50` firmware changes only `version.txt` from `.49`. A physical
+`.49 → .50` BLE update was completed successfully on 2026-10-22; the USB
+bundle still requires its own physical flash test.

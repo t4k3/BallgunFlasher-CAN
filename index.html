@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.42</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.43</title>
 <style>
     :root {
         color-scheme: dark;
@@ -64,6 +64,9 @@
     .device-panel.standalone h2,.device-panel.nextion h2 { color:#fff1e6; }
     .panel-col:nth-child(2) .device-panel h2,.device-panel.pinscan h2 { color:#e6fcff; }
     .device-panel.ftd30 h2 { color:var(--text); }
+    .device-panel.recovery { border-color:rgba(251,191,36,.34); background:linear-gradient(145deg,rgba(42,31,19,.96),rgba(16,18,27,.96)); }
+    .panel-col:nth-child(2) .device-panel.recovery::before { background:linear-gradient(90deg,var(--warn),var(--orange)); opacity:.92; }
+    .panel-col:nth-child(2) .device-panel.recovery h2 { color:#ffe7ad; }
     .device-panel svg { width:17px; height:17px; flex:none; }
     .status { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:7px 9px;
               border:1px solid var(--border-soft); border-radius:8px; background:rgba(7,10,17,.58); color:var(--muted); font-size:12px; }
@@ -86,6 +89,7 @@
     .panel-col:nth-child(2) .btn-update.nextion,.btn-update.pinscan,.btn-update.ftd30-slave,.btn-update.ota {
         background:linear-gradient(135deg,var(--cyan),#0e9fb6); color:#041318; box-shadow:0 9px 24px var(--cyan-glow);
     }
+    .btn-update.recovery { background:linear-gradient(135deg,var(--warn),var(--orange)); color:#1b1004; box-shadow:0 9px 24px var(--orange-glow); }
     .btn-update:hover:not(:disabled) { box-shadow:0 12px 30px var(--orange-glow); }
     .panel-col:nth-child(2) .btn-update:hover:not(:disabled),.btn-update.ota:hover:not(:disabled) { box-shadow:0 12px 30px var(--cyan-glow); }
     .progress { display:none; width:100%; height:6px; overflow:hidden; margin:4px 0 2px; border-radius:999px; background:#070a11; }
@@ -147,7 +151,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.42</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.43</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -273,12 +277,20 @@
             </select>
             <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.50-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
-            <button class="btn-connect" id="otaRecoveryBtn">Recovery V12.2.34 → V12.2.49</button>
-            <div class="chip-info">Recovery: spegni 10 secondi, riaccendi, non premere START, poi usa il pulsante dedicato. Nessun comando START/STOP viene inviato.</div>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
             <div class="progress" id="otaProgress"><div class="progress-bar ota" id="otaProgressBar"></div></div>
             <div class="chip-info" id="otaInfo">Wireless · Chrome/Edge/Android (no iOS)</div>
+        </div>
+
+        <!-- ISOLATED V12.2.34 RECOVERY -->
+        <div class="device-panel recovery" id="otaRecoveryCard">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 8v5h5 M6 13a7 7 0 1 0 2-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                RECOVERY 12.2.34 <span class="sub">BLE · solo .34 → .49</span>
+            </h2>
+            <button class="btn-update recovery" id="otaRecoveryBtn">Avvia Recovery V12.2.34 → V12.2.49</button>
+            <div class="chip-info"><b>Solo per firmware V12.2.34-PDO-FULL.</b> Spegni 10 secondi, riaccendi e non premere START. La versione viene controllata prima di qualsiasi aggiornamento; target fisso V12.2.49. Nessun comando START/STOP viene inviato. Stato e avanzamento nella console.</div>
         </div>
 
         <!-- NEXTION BLE -->
@@ -359,7 +371,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.42 · OTA interno V12.2.50-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.43 · OTA interno V12.2.50-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -384,27 +396,27 @@ const FLASH_CONFIG = {
     STANDALONE: [
         {
             "offset": 0,
-            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/bootloader.bin",
+            "file": "INTERNAL/USB/V12.2.50-PDO-FULL/bootloader.bin",
             "size": 22128,
-            "sha256": "f94b145cfc32863b45b7598300c6ec6bd0b11c32d1e6a505a951a3c3e4e11092"
+            "sha256": "0a596e2f2a0d1e1cf8a2a9c3129731ebd36c02946f90bf45b1794bca76383840"
         },
         {
             "offset": 32768,
-            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/partition-table.bin",
+            "file": "INTERNAL/USB/V12.2.50-PDO-FULL/partition-table.bin",
             "size": 3072,
             "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
         },
         {
             "offset": 57344,
-            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/ota_data_initial.bin",
+            "file": "INTERNAL/USB/V12.2.50-PDO-FULL/ota_data_initial.bin",
             "size": 8192,
             "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
         },
         {
             "offset": 65536,
-            "file": "INTERNAL/USB/V12.2.48-PDO-FULL/BallgunSTANDALONE.bin",
-            "size": 918960,
-            "sha256": "e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30"
+            "file": "INTERNAL/USB/V12.2.50-PDO-FULL/BallgunSTANDALONE.bin",
+            "size": 919120,
+            "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
         }
     ],
     PINSCAN: [
@@ -436,7 +448,7 @@ if (!('serial' in navigator)) {
 // Load STANDALONE version label from remote bin (best-effort)
 (async () => {
     try {
-        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.48-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.50-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
         if (!r.ok) return;
         const buf = new Uint8Array(await r.arrayBuffer());
         const ver = new TextDecoder().decode(buf.subarray(48,80)).split('\0')[0];

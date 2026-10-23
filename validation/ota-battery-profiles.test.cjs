@@ -57,7 +57,7 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
     for(const match of html.matchAll(/flasher-(\d+\.\d+\.\d+)/g)) assert.equal(match[1],metadata.flasher,'All visible build labels must agree');
-    assert.equal(metadata.flasher, '1.5.42');
+    assert.equal(metadata.flasher, '1.5.43');
     assert.equal(metadata.firmware, 'V12.2.50-PDO-FULL');
     assert.equal(metadata.internal_ota.default, 'sodium');
     assert.equal(catalog.sodium.version, 'V12.2.50-PDO-FULL');
@@ -65,6 +65,11 @@ test('page, metadata and standard shared firmware agree', () => {
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
     assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.50-PDO-FULL');
     assert.equal(recovery.version, 'V12.2.49-PDO-FULL');
+    const normalCard = html.slice(html.indexOf('<!-- OTA via Bluetooth -->'), html.indexOf('<!-- ISOLATED V12.2.34 RECOVERY -->'));
+    const recoveryCard = html.slice(html.indexOf('<!-- ISOLATED V12.2.34 RECOVERY -->'), html.indexOf('<!-- NEXTION BLE -->'));
+    assert.ok(!normalCard.includes('otaRecoveryBtn'), 'Recovery must not remain inside the normal OTA card');
+    assert.ok(recoveryCard.includes('id="otaRecoveryCard"') && recoveryCard.includes('id="otaRecoveryBtn"'));
+    assert.match(recoveryCard, /solo \.34 → \.49/);
 });
 test('always starts with sodium even when the browser restores lithium', () => {
     const h = harness();

@@ -1,5 +1,5 @@
 {
-  "flasher": "1.5.42",
+  "flasher": "1.5.43",
   "fleet": "1.0.16",
   "firmware": "V12.2.50-PDO-FULL",
   "firmware_source": {
@@ -42,32 +42,32 @@
     "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
   },
   "internal_usb": {
-    "version": "V12.2.48-PDO-FULL",
+    "version": "V12.2.50-PDO-FULL",
     "profile": "sodium",
     "files": [
       {
         "offset": 0,
-        "path": "INTERNAL/USB/V12.2.48-PDO-FULL/bootloader.bin",
+        "path": "INTERNAL/USB/V12.2.50-PDO-FULL/bootloader.bin",
         "size": 22128,
-        "sha256": "f94b145cfc32863b45b7598300c6ec6bd0b11c32d1e6a505a951a3c3e4e11092"
+        "sha256": "0a596e2f2a0d1e1cf8a2a9c3129731ebd36c02946f90bf45b1794bca76383840"
       },
       {
         "offset": 32768,
-        "path": "INTERNAL/USB/V12.2.48-PDO-FULL/partition-table.bin",
+        "path": "INTERNAL/USB/V12.2.50-PDO-FULL/partition-table.bin",
         "size": 3072,
         "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
       },
       {
         "offset": 57344,
-        "path": "INTERNAL/USB/V12.2.48-PDO-FULL/ota_data_initial.bin",
+        "path": "INTERNAL/USB/V12.2.50-PDO-FULL/ota_data_initial.bin",
         "size": 8192,
         "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
       },
       {
         "offset": 65536,
-        "path": "INTERNAL/USB/V12.2.48-PDO-FULL/BallgunSTANDALONE.bin",
-        "size": 918960,
-        "sha256": "e76253cfbfcdaf45d7e939f6641d3289fea12d0a55f08b61eb6d1c90aaa2eb30"
+        "path": "INTERNAL/USB/V12.2.50-PDO-FULL/BallgunSTANDALONE.bin",
+        "size": 919120,
+        "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
       }
     ]
   }
