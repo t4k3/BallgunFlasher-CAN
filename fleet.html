@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.16</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.17</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -1333,37 +1333,94 @@ function fleetPrepareNodeParameters(base, node) {
 }
 
 async function fleetReadParameter(cmd, node, index) {
-  let r;
-  try { r = await cmd([0xFC,4,node,index&255,index>>8]); }
-  catch (e) { throw new Error(`Nodo ${node} non risponde durante il pre-check (P${index}): ${e.message || e}`); }
-  if (r.length!==8 || r[0]!==0xFC || r[1]!==4 || r[2]!==0 || ![1,2,3,4].includes(r[7]))
-    throw new Error(`Nodo ${node} non riconosciuto: lettura P${index} fallita (stato=${r[2] ?? '—'}, byte=${r[7] ?? '—'})`);
-  return {value:(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0,width:r[7]};
+  const attempts = 5;
+  let lastReply = null, lastError = null;
+  for (let attempt=1; attempt<=attempts; attempt++) {
+    try {
+      const r = await cmd([0xFC,4,node,index&255,index>>8]);
+      lastReply = r;
+      if (r.length===8 && r[0]===0xFC && r[1]===4 && r[2]===0 && [1,2,3,4].includes(r[7]))
+        return {value:(r[3]|r[4]<<8|r[5]<<16|r[6]<<24)>>>0,width:r[7]};
+      lastError = null;
+    } catch (e) {
+      lastError = e;
+    }
+    if (attempt < attempts) {
+      log(`Nodo ${node}: lettura P${index} non riuscita (${attempt}/${attempts}); attendo il CAN e riprovo…`);
+      await new Promise(resolve=>setTimeout(resolve,350));
+    }
+  }
+  if (lastError)
+    throw new Error(`Nodo ${node} non risponde durante il pre-check (P${index}, ${attempts} tentativi): ${lastError.message || lastError}`);
+  throw new Error(`Nodo ${node} non riconosciuto: lettura P${index} fallita dopo ${attempts} tentativi (stato=${lastReply?.[2] ?? '—'}, byte=${lastReply?.[7] ?? '—'})`);
+}
+
+// Read-only CANopen identity upload. Unlike P1, 0x1018 is readable before the
+// PW=11 unlock. The firmware serves FC05 only in Home with fresh zero-RPM
+// telemetry from both nodes, and echoes node/index/sub/offset on every page.
+async function fleetReadIdentity(cmd, node, index=0x1018, sub=1) {
+  const data=[];
+  let total=null;
+  for (let offset=0; offset<=64;) {
+    let r=null;
+    const attempts=offset===0 ? 12 : 3;
+    for (let attempt=1; attempt<=attempts; attempt++) {
+      try { r=await cmd([0xFC,5,node,index&255,index>>8,sub,offset]); }
+      catch (e) {
+        if (attempt===attempts) throw new Error(`Nodo ${node} non risponde durante l'identificazione CANopen: ${e.message || e}`);
+      }
+      const handoverBusy=r?.length===3 && r[2]===0xEE;
+      if (r && !handoverBusy && ![1,5,6].includes(r[2])) break; // timeout/busy/TX possono essere transitori
+      if (attempt<attempts) {
+        log(`Nodo ${node}: identità CANopen non pronta (${attempt}/${attempts}); riprovo…`);
+        await new Promise(resolve=>setTimeout(resolve,handoverBusy?750:350));
+      }
+    }
+    if (r?.length===3 && r[2]===0xEE)
+      throw new Error('La macchina non resta in Home/Idle: verifica entrambi i driver e riaccendi. Nessun parametro scritto');
+    if (!r || r.length<14 || r[0]!==0xFC || r[1]!==5 || r[3]!==node ||
+        r[4]!==(index&255) || r[5]!==(index>>8) || r[6]!==sub || r[8]!==offset)
+      throw new Error(`Nodo ${node} non riconosciuto: risposta identità CANopen non valida`);
+    const abort=(r[10]|r[11]<<8|r[12]<<16|r[13]<<24)>>>0;
+    if (r[2]!==0) {
+      const reason={1:'timeout CAN',2:`SDO abort 0x${abort.toString(16).padStart(8,'0')}`,
+        3:'risposta SDO non valida',4:'identità oltre 64 byte',5:'nodi/RPM non pronti',6:'invio CAN fallito'}[r[2]] || `stato ${r[2]}`;
+      throw new Error(`Nodo ${node} non riconosciuto: ${reason}`);
+    }
+    if (r[7]>64 || r[9]>6 || r.length!==14+r[9] || offset+r[9]>r[7] ||
+        (total!==null && total!==r[7]))
+      throw new Error(`Nodo ${node} non riconosciuto: pagina identità CANopen non valida`);
+    total=r[7]; data.push(...r.slice(14)); offset+=r[9];
+    if (offset===total) return Uint8Array.from(data);
+    if (!r[9]) throw new Error(`Nodo ${node} non riconosciuto: identità CANopen senza avanzamento`);
+  }
+  throw new Error(`Nodo ${node} non riconosciuto: identità CANopen troppo lunga`);
 }
 
 // Read-only pre-check, completed before the first FC02 write. Both CAN IDs
-// must answer with their own P1, at zero RPM, disabled and without alarms.
+// must answer a guarded CANopen identity upload. FC05 itself proves Home and
+// fresh zero-RPM telemetry for both nodes; FC02 rechecks each node before write.
 async function fleetPreflightNodes(cmd, deviceName) {
   const nodes=[];
   for (const node of [1,2]) {
-    const id=await fleetReadParameter(cmd,node,1);
+    const vendor=await fleetReadIdentity(cmd,node,0x1018,1);
+    if (vendor.length!==4) throw new Error(`Nodo ${node} non riconosciuto: Vendor ID CANopen non valido`);
+    const vendorId=(vendor[0]|vendor[1]<<8|vendor[2]<<16|vendor[3]<<24)>>>0;
     const rpm=await fleetReadParameter(cmd,node,0x1218);
     const status=await fleetReadParameter(cmd,node,0x4041);
     const alarm0=await fleetReadParameter(cmd,node,0x1204);
     const alarm1=await fleetReadParameter(cmd,node,0x1205);
-    nodes.push({node,id,rpm,status,alarm0,alarm1});
+    nodes.push({node,vendorId,rpm,status,alarm0,alarm1});
   }
   for (const n of nodes) {
-    if (n.id.value !== n.node)
-      throw new Error(`Nodo ${n.node} non riconosciuto: P1=${n.id.value}, atteso ${n.node}. Nessun parametro scritto.`);
     if (n.rpm.value !== 0)
       throw new Error(`Nodo ${n.node} non fermo: RPM=${n.rpm.value}. Nessun parametro scritto.`);
-    if (![0x21,0x23,0x40].includes(n.status.value & 0x6F))
+    if (![0x00,0x21,0x23,0x40].includes(n.status.value & 0x6F))
       throw new Error(`Nodo ${n.node} non disabilitato: status=0x${n.status.value.toString(16)}. Nessun parametro scritto.`);
     if (n.alarm0.value !== 0 || n.alarm1.value !== 0)
       throw new Error(`Nodo ${n.node} in allarme: ${n.alarm0.value}/${n.alarm1.value}. Nessun parametro scritto.`);
   }
-  log(`${deviceName}: pre-check OK — nodo 1 ID=1 e nodo 2 ID=2 presenti, entrambi fermi/disabilitati e senza allarmi`);
+  log(`${deviceName}: pre-check OK — nodi CANopen 1 e 2 identificati, RPM zero, disabilitati e senza allarmi`);
   return nodes;
 }
 
@@ -1371,22 +1428,29 @@ async function fleetPreflightNodes(cmd, deviceName) {
 // partial RAM/flash update and requires an explicit diagnostic before retrying.
 async function fleetParametersOne(device, progress) {
   const baseParameters = await loadFleetParameterSet();
-  let chr, waiter = null;
+  let chr, waiter = null, expectedReply = null;
   const notify = ev => {
     const v = new Uint8Array(ev.target.value.buffer, ev.target.value.byteOffset, ev.target.value.byteLength);
-    if (v[0] === 0xFC && waiter) waiter(v.slice());
+    if (waiter && expectedReply?.(v)) waiter(v.slice());
   };
-  const cmd = async bytes => {
+  const exchange = async (bytes, accept, timeoutMs, timeoutMessage) => {
     let timer;
     const reply = new Promise((resolve,reject) => {
-      timer = setTimeout(()=>{waiter=null;reject(new Error('Timeout 0xFC; verifica lo stato prima di riprovare'));},15000);
-      waiter = v=>{clearTimeout(timer);waiter=null;resolve(v);};
+      expectedReply = accept;
+      timer = setTimeout(()=>{waiter=null;expectedReply=null;reject(new Error(timeoutMessage));},timeoutMs);
+      waiter = v=>{clearTimeout(timer);waiter=null;expectedReply=null;resolve(v);};
     });
     // Attach the rejection handler before awaiting the write.
     reply.catch(()=>{});
     try {await chr.writeValueWithResponse(Uint8Array.from(bytes)); return await reply;}
-    finally {clearTimeout(timer);waiter=null;}
+    finally {clearTimeout(timer);waiter=null;expectedReply=null;}
   };
+  const cmd = bytes => exchange(bytes,
+    v=>v[0]===0xFC && v[1]===bytes[1],15000,
+    'Timeout 0xFC; verifica lo stato prima di riprovare');
+  const requestStop = () => exchange([0xAA,0x03],
+    v=>v[0]===0xAA && v[1]===0x03,5000,
+    'STOP non confermato dal firmware; nessun parametro scritto');
   try {
     progress(0,'Connessione parametri…');
     if (!device.gatt.connected && device.watchAdvertisements) {
@@ -1406,9 +1470,24 @@ async function fleetParametersOne(device, progress) {
     chr.addEventListener('characteristicvaluechanged',notify);
     await chr.startNotifications();
     await new Promise(r=>setTimeout(r,1200));
-    const cap = await cmd([0xFC,1]);
-    if (cap[2]===0xEE) throw new Error('MOTORI ACCESI');
-    if (cap.length!==3 || cap[1]!==1 || (cap[2]&3)!==3) throw new Error('Serve V12.1.5: sblocco verificato e lettura SDO corretta. Nessun parametro scritto');
+    const stop = await requestStop();
+    if (stop.length<3 || stop[2]!==0)
+      throw new Error('STOP rifiutato dal firmware; nessun parametro scritto');
+    log(`${device.name}: STOP richiesto; attendo Home/Idle prima del pre-check`);
+    progress(0,'Attesa Home/Idle dopo STOP…');
+    // The STOP ACK confirms command reception, not completion of the
+    // asynchronous BLE handover/shutdown state transition.
+    await new Promise(resolve=>setTimeout(resolve,750));
+    let cap = null;
+    for (let attempt=1; attempt<=12; attempt++) {
+      cap = await cmd([0xFC,1]);
+      if (cap[2]!==0xEE) break;
+      progress(0,`Attesa Home/Idle (${attempt}/12)…`);
+      if (attempt<12) await new Promise(resolve=>setTimeout(resolve,750));
+    }
+    if (cap?.[2]===0xEE)
+      throw new Error('La macchina non entra in Home/Idle dopo STOP; spegnere, collegare entrambi i driver e riaccendere. Nessun parametro scritto');
+    if (cap.length!==3 || cap[1]!==1 || (cap[2]&7)!==7) throw new Error('Firmware senza identificazione CANopen e sblocco verificato. Nessun parametro scritto');
     progress(0,'Pre-check nodi 1 e 2…');
     await fleetPreflightNodes(cmd,device.name);
     const saved=[];
