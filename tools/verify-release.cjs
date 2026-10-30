@@ -12,7 +12,7 @@ function checkImage(b,p){
 }
 (async()=>{
  const sodium=meta.internal_ota.profiles.sodium;
- assert.equal(meta.firmware,'V12.2.50-PDO-FULL');assert.equal(sodium.version,meta.firmware);
+ assert.equal(meta.firmware,'V12.2.51-PDO-FULL');assert.equal(sodium.version,meta.firmware);
  assert.equal(meta.internal_ota.profiles.lithium.version,'V12.2.28-LI10S-PDO-FULL');
  assert.equal(meta.recovery_ota.source_version,'V12.2.34-PDO-FULL');
  assert.equal(meta.recovery_ota.version,'V12.2.49-PDO-FULL');
@@ -41,6 +41,7 @@ function checkImage(b,p){
   assert.deepEqual(JSON.parse((await get('version.json')).toString()),meta,'Live catalog must match local release');
   assert.equal(hash(await get('FTD30/waz_nodo2.prm')),hash(prm),'Live parameter set mismatch');
   for(const p of Object.values(meta.internal_ota.profiles))checkImage(await get(p.path),p);
+  checkImage(await get(meta.recovery_ota.path),meta.recovery_ota);
   checkImage(await get(meta.shared_firmware.path),meta.shared_firmware);
   for(const f of meta.internal_usb.files){const b=await get(f.path);assert.equal(b.length,f.size);assert.equal(hash(b),f.sha256);}
   for(const p of ['index.html','fleet.html'])assert.equal(hash(await get(p)),hash(fs.readFileSync(path.join(root,p))),`${p} deployment mismatch`);

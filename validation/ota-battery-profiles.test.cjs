@@ -57,10 +57,10 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
     for(const match of html.matchAll(/flasher-(\d+\.\d+\.\d+)/g)) assert.equal(match[1],metadata.flasher,'All visible build labels must agree');
-    assert.equal(metadata.flasher, '1.5.43');
-    assert.equal(metadata.firmware, 'V12.2.50-PDO-FULL');
+    assert.equal(metadata.flasher, '1.5.44');
+    assert.equal(metadata.firmware, 'V12.2.51-PDO-FULL');
     assert.equal(metadata.internal_ota.default, 'sodium');
-    assert.equal(catalog.sodium.version, 'V12.2.50-PDO-FULL');
+    assert.equal(catalog.sodium.version, 'V12.2.51-PDO-FULL');
     assert.equal(catalog.lithium.version, 'V12.2.28-LI10S-PDO-FULL');
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
     assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.50-PDO-FULL');
@@ -74,7 +74,7 @@ test('page, metadata and standard shared firmware agree', () => {
 test('always starts with sodium even when the browser restores lithium', () => {
     const h = harness();
     assert.equal(h.elements.otaBatteryProfile.value, 'sodium');
-    assert.equal(h.elements.otaVersion.textContent, 'V12.2.50-PDO-FULL');
+    assert.equal(h.elements.otaVersion.textContent, 'V12.2.51-PDO-FULL');
     assert.match(h.elements.otaProfileInfo.textContent, /Sodio/);
     h.select('lithium');
     assert.equal(h.elements.otaVersion.textContent, 'V12.2.28-LI10S-PDO-FULL');

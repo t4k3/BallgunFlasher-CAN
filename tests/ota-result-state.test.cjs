@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const html = fs.readFileSync(path.join(__dirname, '../fleet.html'), 'utf8');
 const extract = name => html.match(new RegExp('^(?:async )?function ' + name + '\\([^]*?^}', 'm'))[0];
-const target = 'V12.2.50-PDO-FULL';
+const target = 'V12.2.51-PDO-FULL';
 
 async function run(result, kind = 'firmware', verification = result) {
   let calls = 0;
