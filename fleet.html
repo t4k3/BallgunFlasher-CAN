@@ -177,7 +177,7 @@
   <header>
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
-      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.18</span>
+      <h1>Ballgun Fleet Update <span class="ver" id="pageVer">v1.0.19</span>
           <span class="ver" id="verCheck"></span></h1>
       <p class="subtitle">Aggiornamento OTA sequenziale · ESP32-C6 · console interna</p>
     </div>
@@ -268,7 +268,7 @@
 // =====================================================================
 // Firmware is loaded exclusively from the verified internal OTA catalog.
 const OTA_SERVICE_UUID = 'b69abf60-e699-beb7-624a-e625c0b1f625';
-const FLEET_TARGET_VERSION = 'V12.2.51-PDO-FULL';
+const FLEET_TARGET_VERSION = 'V12.2.52-PDO-FULL';
 const OTA_CHAR_UUID    = 'a7e5c5dc-918f-45b7-d64e-f90ee72691f9';
 const OTA_SECTOR_SIZE  = 4096;
 const OTA_PKT_PAYLOAD  = 180;
@@ -398,9 +398,9 @@ async function downloadFirmware() {
   if (!metaResponse.ok) throw new Error(`Catalogo firmware HTTP ${metaResponse.status}`);
   const meta = await metaResponse.json();
   const profile = meta.internal_ota?.profiles?.sodium;
-  if (meta.firmware !== 'V12.2.51-PDO-FULL' || profile?.version !== 'V12.2.51-PDO-FULL' ||
-      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.2.51-PDO-FULL.bin')
-    throw new Error('Catalogo diverso dalla release V12.2.51-PDO-FULL: aggiornamento bloccato, ricarica la pagina.');
+  if (meta.firmware !== 'V12.2.52-PDO-FULL' || profile?.version !== 'V12.2.52-PDO-FULL' ||
+      profile?.path !== 'INTERNAL/OTA/naion-11s/V12.2.52-PDO-FULL.bin')
+    throw new Error('Catalogo diverso dalla release V12.2.52-PDO-FULL: aggiornamento bloccato, ricarica la pagina.');
   const res = await fetch(`${base}${profile.path}?cb=${Date.now()}`, { cache:'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status} scaricando il firmware`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -554,20 +554,10 @@ async function otaUpdateOne(device, onProgress) {
       catch (e) { if (a === ENTER_RETRIES) throw new Error('nessuna risposta a ENTER OTA'); }
     }
     if (r.length >= 3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09) {
-      const stopP=waitNotify(5000);stopP.catch(()=>{});
-      await write([0xAA,0x03],true);
-      const stopR=await stopP;
-      if (!(stopR.length>=3 && stopR[0]===0xAA && stopR[1]===0x03 && stopR[2]===0))
-        throw new Error('STOP non confermato: firmware non aggiornato');
-      for(let settle=1;settle<=8;settle++){
-        await new Promise(resolve=>setTimeout(resolve,750));
-        const retryP=waitNotify(ENTER_TIMEOUT);retryP.catch(()=>{});
-        await write([0xFE,0x05],true);r=await retryP;
-        if (!(r.length>=3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)) break;
-      }
-      if (r.length>=3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x09)
-        throw new Error('STOP confermato ma blocco OTA persistente: installare V12.2.48 una volta via USB');
+      throw new Error('Il firmware installato rifiuta l’OTA con il vecchio controllo motori. Nessun dato inviato. Verificare la versione installata: Recovery interna solo per V12.2.34, altrimenti aggiornamento iniziale via USB se il blocco persiste.');
     }
+    if (r.length >= 3 && r[0]===0xFE && r[1]===0xE0 && r[2]===0x0A)
+      throw new Error('Risorse di manutenzione ESP32 occupate o CAN locale non sospendibile; testa non richiesta');
     if (!(r.length >= 3 && r[0]===0xFE && r[1]===0x05)) throw new Error('ENTER OTA: ACK errato');
 
     // --- 2) START (20 byte) ---

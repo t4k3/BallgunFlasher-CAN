@@ -63,6 +63,7 @@ async function run(page, scenario) {
            (scenario==='recoveryGateThenSuccess' && enterWrites<3) ||
            ((scenario==='motorRunningThenStop'||scenario==='stopAckFail') && enterWrites===1))
           notify([0xfe,0xe0,9]);
+        else if(scenario==='maintenanceBusy') notify([0xfe,0xe0,0x0A]);
         else notify([0xfe,5,0]);
       } else {
         if(scenario==='startWriteFail') throw Error('START write failed');
@@ -197,18 +198,27 @@ async function run(page, scenario) {
   for(const page of ['index.html','fleet.html']) {
     for(const scenario of ['timeout','writeFail','writeFailAck','disconnect','nack','crcWrong','indexWrong',
       'shortAck','longAck','resyncLoop','resyncSame','resyncOutOfRange','enterWriteFail','startWriteFail',
-      'motorRunningStuck','stopAckFail']) {
+      'motorRunningStuck','stopAckFail','motorRunningThenStop','maintenanceBusy']) {
       const r=await run(page,scenario);
       assert.equal(r.success,false,`${page}: ${scenario} falsely succeeded`);
       assert(r.failure,`${page}: ${scenario} swallowed failure`);
       assert(!r.progress.includes(100),`${page}: ${scenario} reported 100%`);
+      if(scenario==='maintenanceBusy') {
+        assert.equal(r.stopWrites,0);assert.equal(r.sectors.length,0);
+        assert.match(r.failure.message,/Risorse di manutenzione ESP32/);
+      }
+      if(['motorRunningStuck','stopAckFail','motorRunningThenStop'].includes(scenario)) {
+        assert.equal(r.stopWrites,0,'internal OTA must not send motor commands');
+        assert.equal(r.enterWrites,1,'legacy refusal must not loop waiting for drivers');
+        assert.equal(r.sectors.length,0,'refused firmware must not receive data');
+        assert.match(r.failure.message,/firmware installato/);
+      }
       if(['timeout','nack','crcWrong','indexWrong','shortAck','longAck'].includes(scenario))
         assert.equal(r.sectors.filter(s=>s===1).length,5,`${page}: bounded final retry`);
       cases++;
     }
     for(const [scenario,expected] of [['success',[0,1]],['retryThenSuccess',[0,1,1]],
-      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]],['disconnectAfterAck',[0,1]],
-      ['motorRunningThenStop',[0,1]]]) {
+      ['resyncBackward',[0,1,0,1]],['resyncForward',[0,1]],['disconnectAfterAck',[0,1]]]) {
       const r=await run(page,scenario);
       assert(r.success,`${page}: ${scenario} failed`);
       assert.deepEqual(r.sectors,expected,`${page}: wrong resync target/increment`);
@@ -219,10 +229,7 @@ async function run(page, scenario) {
       assert.equal(r.cleanupDisconnects,scenario==='disconnectAfterAck'?0:1);
       assert.equal(r.finishedAt-r.finalAckAt,scenario==='disconnectAfterAck'?10:8000,
         'preserve reboot grace, bounded at 8 seconds');
-      if(scenario==='motorRunningThenStop') {
-        assert.equal(r.stopWrites,1,'send exactly one STOP before retrying ENTER OTA');
-        assert.equal(r.enterWrites,2,'retry ENTER OTA only after STOP acknowledgement');
-      }
+      assert.equal(r.stopWrites,0,'internal ESP32 OTA has no motor pre-check or STOP');
     }
     if(page==='fleet.html') {
       for(const scenario of ['connectFail','serviceFail','notificationFail','advertReject','advertEarly','advertTimeout']) {
