@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.45</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.46</title>
 <style>
     :root {
         color-scheme: dark;
@@ -151,7 +151,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.45</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.46</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -340,12 +340,13 @@
                 <span id="fparWriteStatusText">Pronto</span>
             </div>
             <button class="btn-update ota" id="fparBothBtn">Carica parametri corretti · nodi 1 + 2</button>
+            <button class="btn-connect" id="fparExperimentalBtn">TEST SPUNTO · P62=151 / P63=151 / P238=101 · nodi 1 + 2</button>
             <div id="fparVerifyPanel" hidden>
                 <label><input type="checkbox" id="fparRebootConfirmed"> Ho spento e riacceso ESP32 e driver, senza Start</label>
                 <button class="btn-connect" id="fparRebootBtn">Verifica dopo riavvio</button>
             </div>
             <div class="progress" id="fparWriteProgress"><div class="progress-bar nextion" id="fparWriteProgressBar"></div></div>
-            <div class="chip-info" id="fparWriteInfo">Azione diretta senza popup: identifica entrambi i nodi, verifica RPM zero e assenza di allarmi, poi scrive, rilegge tutti i 1022 parametri e salva il set corretto. La verifica può richiedere alcuni minuti: stato, conteggio e avanzamento restano visibili. P994 e P1012 restano invariati.</div>
+            <div class="chip-info" id="fparWriteInfo">Il primo pulsante carica il set collaudato invariato. Il pulsante TEST SPUNTO carica un set sperimentale separato: P62=151, P63=151 e P238=101. Entrambe le azioni identificano i due nodi, richiedono RPM zero e nessun allarme, rileggono tutti i 1022 parametri prima del SAVE e preservano P994/P1012.</div>
         </div>
 
         <!-- FTD30 CONTROLLO PARAMETRI (sola lettura) -->
@@ -371,7 +372,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.45 · OTA interno V12.2.52-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.46 · OTA interno V12.2.52-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -2779,6 +2780,7 @@ async function fparReadDiagnostic(){
 // COMPLETE CHECK / TWO-NODE RESTORE. Only FC01/04 and optional GATT reads
 // during checks. Post-reboot verification NEVER unlocks, writes or saves.
 const FPAR_CANONICAL_SHA = '725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2';
+const FPAR_EXPERIMENTAL_SHA = 'cb18982d8de8456f911460afb9322da00bc170c3a3847831a80a4aa121829a76';
 const FPAR_PENDING_KEY = 'wazlley.ftd30.pending.v1';
 function fparReport(text){ log(text,'FTD30'); }
 function fparPendingRecords(){
@@ -2796,7 +2798,7 @@ function fparPendingShow(){
     try {
         const records=Object.values(fparPendingRecords());
         FQ('fparPending').textContent=records.length ? records.map(r=>
-            `${r.name}: ${r.state}; SAVE confermato sui nodi ${r.saved.join(', ')||'nessuno'}`).join('\n') :
+            `${r.name}: ${r.setType==='experimental'?'TEST SPUNTO P62=151 / P63=151 / P238=101':'SET COLLAUDATO'}; ${r.state}; SAVE confermato sui nodi ${r.saved.join(', ')||'nessuno'}`).join('\n') :
             'Nessun ripristino in attesa in questo browser. La verifica del riavvio richiede lo stesso browser.';
     } catch(e) { FQ('fparPending').textContent='Archivio verifiche non accessibile: '+e.message; }
 }
@@ -2819,6 +2821,17 @@ async function fparCanonical(){
     const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
     if(sha!==FPAR_CANONICAL_SHA) throw new Error('Hash del set non corrispondente: ricaricare il portale, nessuna scrittura');
     return fparParsePrm(new TextDecoder().decode(data));
+}
+async function fparExperimental(){
+    const r=await fetch(`${FIRMWARE_BASE}/FTD30/waz_nodo2-current151-idstart101.prm?cb=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    if(!r.ok) throw new Error('Set sperimentale P62=151 / P63=151 / P238=101 non disponibile: nessuna scrittura');
+    const data=await r.arrayBuffer();
+    const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
+    if(sha!==FPAR_EXPERIMENTAL_SHA) throw new Error('Hash del set sperimentale non corrispondente: ricaricare il portale, nessuna scrittura');
+    const set=fparParsePrm(new TextDecoder().decode(data));
+    if(set.find(p=>p.index===62)?.value!==151 || set.find(p=>p.index===63)?.value!==151 || set.find(p=>p.index===238)?.value!==101)
+        throw new Error('Set sperimentale non coerente con P62=151, P63=151 e P238=101: nessuna scrittura');
+    return set;
 }
 async function fparValue(node,index){
     let r;
@@ -2920,24 +2933,29 @@ async function fparCompleteCheck(){
     }
     finally { FPAR.busy=false;FQ('fparCheckBtn').disabled=false; if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect(); }
 }
-async function fparRestoreBoth(){
+async function fparRestoreBoth(setType='canonical'){
     if(FPAR.busy)return;
+    if(!['canonical','experimental'].includes(setType))throw new Error('Profilo parametri non valido');
     FPAR.ui='write';
     FPAR.busy=true; let record;
     FQ('fparBothBtn').disabled=true;
+    FQ('fparExperimentalBtn').disabled=true;
     FQ('fparRebootConfirmed').checked=false;
     FQ('fparRebootConfirmed').disabled=true;
     try {
         if(!FPAR.char)await fparConnect();
-        const set=await fparCanonical();
+        const experimental=setType==='experimental';
+        const set=experimental?await fparExperimental():await fparCanonical();
+        const setSha=experimental?FPAR_EXPERIMENTAL_SHA:FPAR_CANONICAL_SHA;
+        const setLabel=experimental?'TEST SPUNTO P62=151 / P63=151 / P238=101':'SET COLLAUDATO';
         const cap=await fparCmd([0xFC,1],5000);
         if(cap.length!==3||cap[0]!==0xFC||cap[1]!==1||cap[2]===0xEE||(cap[2]&3)!==3)
             throw new Error('Firmware senza sblocco PW=11 verificato: nessuna scrittura');
         const nodes=await fparSnapshot();
         fparReport(fparSummary(nodes,await fparEspVersion()));
         if(!fparSafeNodes(nodes)) throw new Error('Servono ID 1 e 2 corretti, entrambi fermi/disabilitati e senza allarmi. Nessuna scrittura');
-        fparReport(`Pre-check OK per ${FPAR.device.name}. Inizio caricamento automatico: 1022 parametri su ciascun driver; P994 (calibrazione) e P1012 (seriale) restano invariati. Il set cambia solo P1 (ID 1/2). Non scollegare.`);
-        record={id:FPAR.device.id,name:FPAR.device.name,sha:FPAR_CANONICAL_SHA,saved:[],state:'ripristino in corso',at:Date.now()};
+        fparReport(`Pre-check OK per ${FPAR.device.name}. Profilo selezionato: ${setLabel}. Inizio caricamento automatico: 1022 parametri su ciascun driver; P994 (calibrazione) e P1012 (seriale) restano invariati. Fra i nodi cambia solo P1 (ID 1/2). Non scollegare.`);
+        record={id:FPAR.device.id,name:FPAR.device.name,sha:setSha,setType,saved:[],state:'ripristino in corso',at:Date.now()};
         fparPendingStore(record); // Storage must work BEFORE any write.
         for(const node of [1,2]){
             fparReport(`${record.name}: ripristino nodo ${node} in corso. Non scollegare. Il lavoro non è ancora completo.`);
@@ -2956,6 +2974,7 @@ async function fparRestoreBoth(){
         fparStatus(false,'Ripristino non completato');
     } finally {
         FQ('fparBothBtn').disabled=false;
+        FQ('fparExperimentalBtn').disabled=false;
         FQ('fparRebootConfirmed').checked=false;FQ('fparRebootConfirmed').disabled=false;
         FPAR.busy=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();
     }
@@ -2972,10 +2991,12 @@ async function fparVerifyReboot(){
         FPAR.char=null; await fparConnect();
         const selected=fparPendingRecords()[FPAR.device.id];
         record=selected;
-        if(!record || record.sha!==FPAR_CANONICAL_SHA || record.saved.length!==2 || ![1,2].every(n=>record.saved.includes(n)))
+        const setType=record?.setType||'canonical';
+        const setSha=setType==='experimental'?FPAR_EXPERIMENTAL_SHA:FPAR_CANONICAL_SHA;
+        if(!record || record.sha!==setSha || record.saved.length!==2 || ![1,2].every(n=>record.saved.includes(n)))
             throw new Error('Nessun ripristino completo in attesa per QUESTA macchina/browser. Ripeti il ripristino');
         record.state='verifica dopo riavvio in corso';delete record.verifiedAt;fparPendingStore(record);
-        const set=await fparCanonical(),nodes=await fparSnapshot();
+        const set=setType==='experimental'?await fparExperimental():await fparCanonical(),nodes=await fparSnapshot();
         if(!fparSafeNodes(nodes))throw new Error('Nodi non pronti, ID errati, allarmi o motori non fermi');
         fparReport(`${record.name}: verifica dopo riavvio in corso, nessuna scrittura…`);
         for(const node of [1,2]){
@@ -2993,7 +3014,8 @@ async function fparVerifyReboot(){
     finally{FPAR.busy=false;FQ('fparRebootConfirmed').checked=false;if(FPAR.device?.gatt.connected)FPAR.device.gatt.disconnect();}
 }
 FQ('fparCheckBtn').addEventListener('click',fparCompleteCheck);
-FQ('fparBothBtn').addEventListener('click',fparRestoreBoth);
+FQ('fparBothBtn').addEventListener('click',()=>fparRestoreBoth('canonical'));
+FQ('fparExperimentalBtn').addEventListener('click',()=>fparRestoreBoth('experimental'));
 FQ('fparRebootBtn').addEventListener('click',fparVerifyReboot);
 fparPendingShow();
 </script>

@@ -4,35 +4,38 @@ const {webcrypto}=require('node:crypto');
 const root=require('node:path').resolve(__dirname,'..');
 const html=fs.readFileSync(root+'/index.html','utf8');
 const card=html.slice(html.indexOf('<!-- FTD30 CARICA PARAMETRI'),html.indexOf('<!-- COLUMN 3'));
-assert.deepEqual([...card.matchAll(/<button[^>]*id="([^"]+)"/g)].map(m=>m[1]),['fparBothBtn','fparRebootBtn','fparCheckBtn']);
+assert.deepEqual([...card.matchAll(/<button[^>]*id="([^"]+)"/g)].map(m=>m[1]),['fparBothBtn','fparExperimentalBtn','fparRebootBtn','fparCheckBtn']);
 assert.match(card,/id="fparBothBtn">Carica parametri corretti/);
+assert.match(card,/id="fparExperimentalBtn">TEST SPUNTO/);
 assert.doesNotMatch(card,/id="fparBothBtn"[^>]*hidden/);
 assert.match(card,/id="fparVerifyPanel" hidden/);
 assert.match(card,/CONTROLLO PARAMETRI FTD30/);
 assert.match(card,/Non è necessaria prima del caricamento/);
 assert(!/id="fpar(?:SetFile|DiagnosticBtn|RestoreBtn)"/.test(card));
 assert(!/id="fparReport"/.test(card),'Reports belong only in the console, not the card');
-assert.deepEqual([...html.matchAll(/FQ\('([^']+)'\)\.addEventListener/g)].map(m=>m[1]),['fparCheckBtn','fparBothBtn','fparRebootBtn']);
+assert.deepEqual([...html.matchAll(/FQ\('([^']+)'\)\.addEventListener/g)].map(m=>m[1]),['fparCheckBtn','fparBothBtn','fparExperimentalBtn','fparRebootBtn']);
 const names=['fparParsePrm','fparPrep','fparRestoreFailure','fparRestoreNode','fparVerifyAll','fparVerifyNode','fparReadParam',
- 'fparReport','fparPendingRecords','fparPendingShow','fparPendingStore','fparInvalidateVerification','fparCanonical','fparValue',
+ 'fparReport','fparPendingRecords','fparPendingShow','fparPendingStore','fparInvalidateVerification','fparCanonical','fparExperimental','fparValue',
  'fparSame','fparCompare','fparEspVersion','fparSnapshot','fparSafeNodes','fparSummary',
  'fparCompleteCheck','fparRestoreBoth','fparVerifyReboot'];
 const source=names.map(n=>{const m=html.match(new RegExp(`(?:async )?function ${n}\\([^]*?^}`,'m'));assert(m,n);return m[0];}).join('\n');
 const restoreSource=html.match(/async function fparRestoreBoth\([^]*?^}/m)[0];
 assert.doesNotMatch(restoreSource,/\b(?:confirm|alert)\s*\(/,'Direct parameter load must not open browser popups');
 const bytes=fs.readFileSync(root+'/FTD30/waz_nodo2.prm');
+const experimentalBytes=fs.readFileSync(root+'/FTD30/waz_nodo2-current151-idstart101.prm');
 function harness(){
  const controls={},storage={},calls=[],logs=[],statuses=[],progress=[];
  const device={id:'casoria-id',name:'wazlley_E56E',gatt:{connected:true,disconnect(){this.connected=false;}}};
  const c={FPAR:{busy:false,char:{},device,server:{getPrimaryService:async()=>{throw Error('no DIS');}}},
   FPAR_BATCH:24,FPAR_VERIFY_IDX:[1,21,67,78,84,200],
   FPAR_CANONICAL_SHA:'725fc26d36910d6a7e28923003bb234d26189f6957ee7a70bd5a8fcde4e88fa2',
+  FPAR_EXPERIMENTAL_SHA:'cb18982d8de8456f911460afb9322da00bc170c3a3847831a80a4aa121829a76',
   FPAR_PENDING_KEY:'pending',FIRMWARE_BASE:'https://example.invalid',
   Uint8Array,TextDecoder,Date,AbortSignal,crypto:webcrypto,
   FQ:id=>controls[id]||(controls[id]={checked:false}),confirm:()=>true,
   log:s=>logs.push(s),fparStatus:(ok,s)=>{c.status={ok,s};statuses.push(s);},fparProgress:p=>progress.push(p),
   localStorage:{getItem:k=>storage[k]||null,setItem:(k,v)=>{storage[k]=v;}},
-  fetch:async()=>({ok:true,arrayBuffer:async()=>Uint8Array.from(bytes).buffer}),
+  fetch:async url=>({ok:true,arrayBuffer:async()=>Uint8Array.from(String(url).includes('current151')?experimentalBytes:bytes).buffer}),
   fparConnect:async()=>{c.FPAR.device=device;c.FPAR.char={};device.gatt.connected=true;}
  };
  vm.createContext(c);vm.runInContext(source,c);
@@ -94,6 +97,16 @@ function harness(){
  h.controls.fparRebootConfirmed.checked=true;h.data[2].set(200,6);await h.c.fparVerifyReboot();
  assert(!h.c.status.ok);assert.match(h.logs.join('\n'),/persistenza NON confermata/);
  assert(!JSON.parse(h.storage.pending)['casoria-id'].verifiedAt,'old success invalidated');
+
+ // The experimental route is explicit, pinned to its own file/hash and is
+ // verified after reboot against that same set, never the canonical set.
+ h=harness();await h.c.fparRestoreBoth('experimental');
+ assert.equal(h.data[1].get(62),151);assert.equal(h.data[1].get(63),151);assert.equal(h.data[1].get(238),101);
+ assert.equal(h.data[2].get(62),151);assert.equal(h.data[2].get(63),151);assert.equal(h.data[2].get(238),101);
+ assert.equal(JSON.parse(h.storage.pending)['casoria-id'].setType,'experimental');
+ assert.equal(JSON.parse(h.storage.pending)['casoria-id'].sha,h.c.FPAR_EXPERIMENTAL_SHA);
+ h.controls.fparRebootConfirmed.checked=true;await h.c.fparVerifyReboot();assert(h.c.status.ok);
+ assert.match(h.logs.join('\n'),/TEST SPUNTO P62=151 \/ P63=151 \/ P238=101/);
 
  // Partial second-node failure cannot masquerade as success or pass reboot gate.
  h=harness();h.fail(p=>p[1]===2&&p[2]===2?[0xfc,2,0xe1]:null);await h.c.fparRestoreBoth();

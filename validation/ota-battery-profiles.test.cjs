@@ -57,7 +57,7 @@ function harness({ restored = 'lithium', fetchResult, connectResult = true, conn
 test('page, metadata and standard shared firmware agree', () => {
     assert.ok(html.includes(`flasher-${metadata.flasher}`));
     for(const match of html.matchAll(/flasher-(\d+\.\d+\.\d+)/g)) assert.equal(match[1],metadata.flasher,'All visible build labels must agree');
-    assert.equal(metadata.flasher, '1.5.45');
+    assert.equal(metadata.flasher, '1.5.46');
     assert.equal(metadata.firmware, 'V12.2.52-PDO-FULL');
     assert.equal(metadata.internal_ota.default, 'sodium');
     assert.equal(catalog.sodium.version, 'V12.2.52-PDO-FULL');
