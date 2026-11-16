@@ -1,21 +1,21 @@
 {
-  "flasher": "1.5.47",
-  "fleet": "1.0.20",
-  "firmware": "V12.2.53-PDO-FULL",
+  "flasher": "1.5.48",
+  "fleet": "1.0.21",
+  "firmware": "V12.2.54-PDO-FULL",
   "firmware_source": {
     "repository": "t4k3/ballgun_STANDALONE_CANBUS",
     "branch": "main",
-    "commit": "98c05532b8bdd10c2ae6eba84095c759a208b555"
+    "commit": "ca8870b77464624bca9be28a190d835f9b892cc6"
   },
   "internal_ota": {
     "default": "sodium",
     "profiles": {
       "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.53-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.53-PDO-FULL.bin",
-        "size": 920832,
-        "sha256": "e79cfcdc93d99c45c03c54672d24149a2c5582a81e27f13878eed636e2f90648"
+        "version": "V12.2.54-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.54-PDO-FULL.bin",
+        "size": 920816,
+        "sha256": "13956c637578d1e81d445228f5b412c4402ec8a8f6945a70375e0ab0d6c11ef1"
       },
       "lithium": {
         "label": "Litio 36 V · 10S",
@@ -42,32 +42,32 @@
     "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
   },
   "internal_usb": {
-    "version": "V12.2.53-PDO-FULL",
+    "version": "V12.2.54-PDO-FULL",
     "profile": "sodium",
     "files": [
       {
         "offset": 0,
-        "path": "INTERNAL/USB/V12.2.53-PDO-FULL/bootloader.bin",
+        "path": "INTERNAL/USB/V12.2.54-PDO-FULL/bootloader.bin",
         "size": 22128,
         "sha256": "81428cd07f36418ad6a1c18731f2e811b60612fd72b83d71ae30cbcad41913ed"
       },
       {
         "offset": 32768,
-        "path": "INTERNAL/USB/V12.2.53-PDO-FULL/partition-table.bin",
+        "path": "INTERNAL/USB/V12.2.54-PDO-FULL/partition-table.bin",
         "size": 3072,
         "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
       },
       {
         "offset": 57344,
-        "path": "INTERNAL/USB/V12.2.53-PDO-FULL/ota_data_initial.bin",
+        "path": "INTERNAL/USB/V12.2.54-PDO-FULL/ota_data_initial.bin",
         "size": 8192,
         "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
       },
       {
         "offset": 65536,
-        "path": "INTERNAL/USB/V12.2.53-PDO-FULL/BallgunSTANDALONE.bin",
-        "size": 920832,
-        "sha256": "e79cfcdc93d99c45c03c54672d24149a2c5582a81e27f13878eed636e2f90648"
+        "path": "INTERNAL/USB/V12.2.54-PDO-FULL/BallgunSTANDALONE.bin",
+        "size": 920816,
+        "sha256": "13956c637578d1e81d445228f5b412c4402ec8a8f6945a70375e0ab0d6c11ef1"
       }
     ]
   }
