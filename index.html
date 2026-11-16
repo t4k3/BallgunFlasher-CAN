@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ballgun CAN Flasher (internal) flasher-1.5.46</title>
+<title>Ballgun CAN Flasher (internal) flasher-1.5.47</title>
 <style>
     :root {
         color-scheme: dark;
@@ -151,7 +151,7 @@
     <div class="brand-mark" aria-hidden="true">V12</div>
     <div class="header-copy">
         <h1>Ballgun CAN Flasher</h1>
-        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.46</div>
+        <div class="subtitle">ESP32-C6 · CANopen CiA 402 · FTD30 service console · flasher-1.5.47</div>
     </div>
     <div class="prod-banner">
         <div class="prod-banner-inner">⚠ INTERNAL — NOT FOR CUSTOMERS<span class="small">customers: /BallgunFlasher/</span></div>
@@ -275,7 +275,7 @@
                 <option value="lithium">Litio 36 V · 10S</option>
                 <option value="custom" disabled hidden>File personalizzato</option>
             </select>
-            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.52-PDO-FULL · 44 V max</div>
+            <div id="otaProfileInfo" class="ota-profile-info" aria-live="polite">Sodio · V12.2.53-PDO-FULL · 44 V max</div>
             <button class="btn-update ota" id="otaConnectBtn">Connect &amp; Update</button>
             <label class="file-pick" for="otaFile" id="otaFileLabel">…or pick custom .bin</label>
             <input type="file" id="otaFile" accept=".bin" style="display:none;" />
@@ -372,7 +372,7 @@
     </div>
 
     <div class="footer-row">
-        <span>Flasher build: <code id="flasherBuild">flasher-1.5.46 · OTA interno V12.2.52-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
+        <span>Flasher build: <code id="flasherBuild">flasher-1.5.47 · OTA interno V12.2.53-PDO-FULL / V12.2.28-LI10S-PDO-FULL</code></span>
         <span>USB interno · Sodio 11S <code id="footerVersion">…</code></span>
         <span><a href="fleet.html"
                  title="Aggiorna più sparapalloni in sequenza (OTA)">🛰️ Fleet update (multi)</a></span>
@@ -397,27 +397,27 @@ const FLASH_CONFIG = {
     STANDALONE: [
     {
         "offset": 0,
-        "file": "INTERNAL/USB/V12.2.52-PDO-FULL/bootloader.bin",
+        "file": "INTERNAL/USB/V12.2.53-PDO-FULL/bootloader.bin",
         "size": 22128,
-        "sha256": "1b1c9787eda653fdce6298aeb3adb2f9913ed274824bf071d50ba5eade6ae565"
+        "sha256": "81428cd07f36418ad6a1c18731f2e811b60612fd72b83d71ae30cbcad41913ed"
     },
     {
         "offset": 32768,
-        "file": "INTERNAL/USB/V12.2.52-PDO-FULL/partition-table.bin",
+        "file": "INTERNAL/USB/V12.2.53-PDO-FULL/partition-table.bin",
         "size": 3072,
         "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
     },
     {
         "offset": 57344,
-        "file": "INTERNAL/USB/V12.2.52-PDO-FULL/ota_data_initial.bin",
+        "file": "INTERNAL/USB/V12.2.53-PDO-FULL/ota_data_initial.bin",
         "size": 8192,
         "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
     },
     {
         "offset": 65536,
-        "file": "INTERNAL/USB/V12.2.52-PDO-FULL/BallgunSTANDALONE.bin",
-        "size": 920384,
-        "sha256": "dcfa5233a9526e3065e4cb9cce7b69d76c44d6ce1db18c68a87ac29b26e71a21"
+        "file": "INTERNAL/USB/V12.2.53-PDO-FULL/BallgunSTANDALONE.bin",
+        "size": 920832,
+        "sha256": "e79cfcdc93d99c45c03c54672d24149a2c5582a81e27f13878eed636e2f90648"
     }
 ],
     PINSCAN: [
@@ -449,7 +449,7 @@ if (!('serial' in navigator)) {
 // Load STANDALONE version label from remote bin (best-effort)
 (async () => {
     try {
-        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.52-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
+        const r = await fetch(`${FIRMWARE_BASE}/INTERNAL/USB/V12.2.53-PDO-FULL/BallgunSTANDALONE.bin?cb=${Date.now()}`);
         if (!r.ok) return;
         const buf = new Uint8Array(await r.arrayBuffer());
         const ver = new TextDecoder().decode(buf.subarray(48,80)).split('\0')[0];
@@ -1721,10 +1721,10 @@ async function otaRunUpdate(binData, options = {}) {
 const OTA_BATTERY_PROFILES = Object.freeze({
     "sodium": {
         "label": "Sodio · 11S",
-        "version": "V12.2.52-PDO-FULL",
-        "path": "INTERNAL/OTA/naion-11s/V12.2.52-PDO-FULL.bin",
-        "size": 920384,
-        "sha256": "dcfa5233a9526e3065e4cb9cce7b69d76c44d6ce1db18c68a87ac29b26e71a21"
+        "version": "V12.2.53-PDO-FULL",
+        "path": "INTERNAL/OTA/naion-11s/V12.2.53-PDO-FULL.bin",
+        "size": 920832,
+        "sha256": "e79cfcdc93d99c45c03c54672d24149a2c5582a81e27f13878eed636e2f90648"
     },
     "lithium": {
         "label": "Litio 36 V · 10S",
