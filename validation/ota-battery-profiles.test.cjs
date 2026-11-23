@@ -63,7 +63,7 @@ test('page, metadata and standard shared firmware agree', () => {
     assert.equal(catalog.sodium.version, 'V12.2.54-PDO-FULL');
     assert.equal(catalog.lithium.version, 'V12.2.28-LI10S-PDO-FULL');
     const shared = fs.readFileSync(path.join(root, 'STANDALONE/BallgunSTANDALONE.bin'));
-    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.50-PDO-FULL');
+    assert.equal(shared.subarray(48,80).toString().split('\0')[0], 'V12.2.54-PDO-FULL');
     assert.equal(recovery.version, 'V12.2.49-PDO-FULL');
     const normalCard = html.slice(html.indexOf('<!-- OTA via Bluetooth -->'), html.indexOf('<!-- ISOLATED V12.2.34 RECOVERY -->'));
     const recoveryCard = html.slice(html.indexOf('<!-- ISOLATED V12.2.34 RECOVERY -->'), html.indexOf('<!-- NEXTION BLE -->'));

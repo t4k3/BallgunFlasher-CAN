@@ -36,10 +36,10 @@
   },
   "shared_firmware": {
     "label": "Sodio · 11S",
-    "version": "V12.2.50-PDO-FULL",
+    "version": "V12.2.54-PDO-FULL",
     "path": "STANDALONE/BallgunSTANDALONE.bin",
-    "size": 919120,
-    "sha256": "ac8240e0a89ec46f025bf1ca9e4dfa963cf596c96d2511b71a6b43c816c8734a"
+    "size": 920816,
+    "sha256": "13956c637578d1e81d445228f5b412c4402ec8a8f6945a70375e0ab0d6c11ef1"
   },
   "internal_usb": {
     "version": "V12.2.54-PDO-FULL",
